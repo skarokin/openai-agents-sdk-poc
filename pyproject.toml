@@ -1,0 +1,12 @@
+[project]
+name = "agentpoc"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "services/agent",
+    "packages/agent-common",
+]
+
