@@ -1,15 +1,11 @@
-"""Global soft-deadline policy for root and nested agent runs."""
+"""Soft-deadline enforcement only. Nested runs get this hook via as_tool(hooks=...)."""
 
 import logging
-from collections.abc import Callable
-from typing import Any, cast
 
 from agents import (
-    AgentBase,
     RunContextWrapper,
     RunHooks,
     ToolGuardrailFunctionOutput,
-    ToolInputGuardrail,
     ToolInputGuardrailData,
     tool_input_guardrail,
 )
@@ -26,64 +22,31 @@ SOFT_DEADLINE_MESSAGE = (
 )
 
 
-def _roles_allowed(context: AgentContext, allowed_roles: frozenset[str]) -> bool:
-    return not allowed_roles or bool(context.identity.roles & allowed_roles)
+@tool_input_guardrail(name="soft_deadline")
+async def soft_deadline_tool_guardrail(
+    data: ToolInputGuardrailData,
+) -> ToolGuardrailFunctionOutput:
+    """Block tool execution after the deadline; emit a stream event if a sink exists."""
 
-
-def make_tool_enabled(
-    allowed_roles: frozenset[str],
-) -> Callable[[RunContextWrapper[Any], AgentBase[Any]], bool]:
-    """Hide tools the caller cannot use."""
-
-    def is_enabled(
-        context: RunContextWrapper[Any],
-        agent: AgentBase[Any],
-    ) -> bool:
-        del agent
-        agent_context = cast(AgentContext, context.context)
-        return _roles_allowed(agent_context, allowed_roles)
-
-    return is_enabled
-
-
-def make_tool_policy_guardrail(
-    tool_name: str,
-    allowed_roles: frozenset[str],
-) -> ToolInputGuardrail[AgentContext]:
-    """Recheck deadline and RBAC immediately before tool execution."""
-
-    @tool_input_guardrail(name=f"{tool_name}_policy")
-    async def policy(
-        data: ToolInputGuardrailData,
-    ) -> ToolGuardrailFunctionOutput:
-        context: AgentContext = data.context.context
-        if context.deadline_exceeded:
-            await context.event_sink.emit(
-                GuardrailTripped(
-                    guardrail_name="soft_deadline",
-                    kind="tool_input",
-                    message=SOFT_DEADLINE_MESSAGE,
-                ),
-                source=EventSource(
-                    agent_name=data.agent.name,
-                    invocation_id=data.context.tool_call_id,
-                ),
-            )
-            return ToolGuardrailFunctionOutput.reject_content(
-                SOFT_DEADLINE_MESSAGE,
-                output_info={"tool": tool_name, "reason": "soft_deadline"},
-            )
-
-        if not _roles_allowed(context, allowed_roles):
-            message = f"The caller is not authorized to use the {tool_name} tool."
-            return ToolGuardrailFunctionOutput.reject_content(
-                message,
-                output_info={"tool": tool_name, "reason": "forbidden"},
-            )
-
+    context: AgentContext = data.context.context
+    if not context.deadline_exceeded:
         return ToolGuardrailFunctionOutput.allow()
 
-    return policy
+    await context.event_sink.emit(
+        GuardrailTripped(
+            guardrail_name="soft_deadline",
+            kind="tool_input",
+            message=SOFT_DEADLINE_MESSAGE,
+        ),
+        source=EventSource(
+            agent_name=data.agent.name,
+            invocation_id=data.context.tool_call_id,
+        ),
+    )
+    return ToolGuardrailFunctionOutput.reject_content(
+        SOFT_DEADLINE_MESSAGE,
+        output_info={"reason": "soft_deadline"},
+    )
 
 
 def soft_deadline_model_filter(
@@ -103,7 +66,7 @@ def soft_deadline_model_filter(
 
 
 class SoftDeadlineHook(RunHooks[AgentContext]):
-    """Observe the deadline at SDK lifecycle checkpoints."""
+    """Observe the deadline at SDK lifecycle checkpoints, including nested as_tool runs."""
 
     @staticmethod
     def _check(context: RunContextWrapper[AgentContext], checkpoint: str) -> None:

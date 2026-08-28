@@ -18,8 +18,12 @@ from agent.core.observability import bind_observability_context
 from agent.core.session_manager import SessionManager
 from agent.formatters import EventsFormatter
 
-from .dependencies import events_formatter, session_manager, trusted_identity
-from .mapping import stream_event
+from agent.common.http_dependencies import (
+    events_formatter,
+    session_manager,
+    trusted_identity,
+)
+from agent.common.http_mapping import stream_event
 
 router = APIRouter(prefix="/v1/agent", tags=["agent-sse"])
 

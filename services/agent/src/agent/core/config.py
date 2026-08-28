@@ -19,18 +19,15 @@ class AgentConfig(ConfigModel):
 
 
 class ToolConfig(ConfigModel):
+    import_path: str
     enabled: bool = True
     allowed_roles: frozenset[str] = Field(default_factory=frozenset)
     requires_approval: bool = False
 
 
-class ToolRegistryConfig(ConfigModel):
-    tools: dict[str, ToolConfig]
-
-
 class ServiceConfig(ConfigModel):
     agent: AgentConfig
-    tools: ToolRegistryConfig
+    tools: dict[str, ToolConfig]
 
 
 def _load_yaml(path: Path) -> dict:
@@ -47,7 +44,8 @@ def load_service_config(config_dir: Path | None = None) -> ServiceConfig:
     configured_model = os.getenv("AGENT_MODEL")
     if configured_model:
         agent = agent.model_copy(update={"model": configured_model})
-    tools = ToolRegistryConfig.model_validate(
-        _load_yaml(directory / "tool_config.yaml")
-    )
+    tools = {
+        name: ToolConfig.model_validate(settings)
+        for name, settings in _load_yaml(directory / "tool_config.yaml").items()
+    }
     return ServiceConfig(agent=agent, tools=tools)

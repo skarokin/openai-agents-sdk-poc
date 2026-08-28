@@ -10,8 +10,8 @@ from agent.core.models import IdentityContext
 from agent.core.observability import bind_observability_context
 from agent.formatters import CompleteFormatter
 
-from .dependencies import complete_formatter, trusted_identity
-from .mapping import complete_response
+from agent.common.http_dependencies import complete_formatter, trusted_identity
+from agent.common.http_mapping import complete_response
 
 router = APIRouter(prefix="/v1/agent", tags=["agent-rest"])
 

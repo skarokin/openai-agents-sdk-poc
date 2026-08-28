@@ -40,6 +40,16 @@ class Query:
 
 
 @dataclass(frozen=True, slots=True)
+class SubagentSpec:
+    """Definition of an agent-as-tool. Instances can live in any module."""
+
+    agent_name: str
+    instructions: str
+    description: str
+    tools: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class UsageUpdate:
     """Cumulative usage observed during the run."""
 

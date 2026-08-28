@@ -1,19 +1,17 @@
-"""Global agent hooks and policies."""
+"""Global agent hooks."""
 
 from .deadline import (
     GLOBAL_DEADLINE_HOOK,
     SOFT_DEADLINE_MESSAGE,
     SOFT_DEADLINE_SECONDS,
-    make_tool_enabled,
-    make_tool_policy_guardrail,
     soft_deadline_model_filter,
+    soft_deadline_tool_guardrail,
 )
 
 __all__ = [
     "GLOBAL_DEADLINE_HOOK",
     "SOFT_DEADLINE_MESSAGE",
     "SOFT_DEADLINE_SECONDS",
-    "make_tool_enabled",
-    "make_tool_policy_guardrail",
     "soft_deadline_model_filter",
+    "soft_deadline_tool_guardrail",
 ]
