@@ -1,0 +1,21 @@
+[project]
+name = "agent-cli"
+version = "0.1.0"
+description = "Interactive client for the multi-protocol agent POC"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "agent-common",
+    "httpx",
+    "pydantic",
+]
+
+[project.scripts]
+agent-cli = "agent_cli.main:main"
+
+[tool.uv.sources]
+agent-common = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.7,<0.13.0"]
+build-backend = "uv_build"

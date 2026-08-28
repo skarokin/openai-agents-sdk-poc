@@ -8,11 +8,22 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "openai-agents>=0.22.0",
+    "agent-common",
+    "fastapi",
+    "openai-agents~=0.22.0",
+    "opentelemetry-api",
+    "opentelemetry-exporter-otlp-proto-http",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-sdk",
+    "pyyaml",
+    "uvicorn[standard]",
 ]
 
 [project.scripts]
-agent = "agent:main"
+agent = "agent.main:main"
+
+[tool.uv.sources]
+agent-common = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]

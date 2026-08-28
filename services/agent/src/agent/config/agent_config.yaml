@@ -1,3 +1,7 @@
-# agent config
-# - model ID
-# - system prompt
+name: Multi-Protocol Assistant
+model: gpt-4.1-mini
+max_turns: 12
+instructions: |
+  You are a concise assistant. Use tools when they improve correctness.
+  When a tool reports that the soft deadline has expired, do not call more
+  tools. Return the best answer you can with the information already available.

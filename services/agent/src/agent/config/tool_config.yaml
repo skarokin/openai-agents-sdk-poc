@@ -1,4 +1,17 @@
-# tool config
-# - tool import path
-# - HITL enabled yes/no
-# - allowed roles
+tools:
+  calculator:
+    enabled: true
+    allowed_roles: [calculator]
+    requires_approval: false
+  approval_demo:
+    enabled: true
+    allowed_roles: [approval_user]
+    requires_approval: true
+  protected_subagent:
+    enabled: true
+    allowed_roles: [subagent_user]
+    requires_approval: true
+  open_subagent:
+    enabled: true
+    allowed_roles: [subagent_user]
+    requires_approval: false

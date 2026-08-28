@@ -8,6 +8,7 @@ there are currently two formatters:
 Use the complete formatter when only the final answer is needed.
 Use the events formatter when incremental output, task progress, etc. is needed.
 """
+
 from .complete import CompleteFormatter
 from .events import EventsFormatter
 

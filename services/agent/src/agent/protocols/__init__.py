@@ -1,5 +1,5 @@
 """
-different ways to call the agent. the agent created is identical (always instantiate the agent from core) but the 
+different ways to call the agent. the agent created is identical (always instantiate the agent from core) but the
 way the response is returned back to the caller is different.
 
 the protocol adapters are responsible for:
@@ -12,3 +12,8 @@ the protocol adapters are responsible for:
 
 the protocol adapters never directly call the agent - they always call the formatter (which in turn runs the agent).
 """
+
+from .http_rest import router as rest_router
+from .http_sse import router as sse_router
+
+__all__ = ["rest_router", "sse_router"]

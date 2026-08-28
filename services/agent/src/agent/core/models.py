@@ -1,8 +1,12 @@
 """
 core models for the agent service
 """
+
+import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Literal, Mapping, Protocol
+from typing import Any, Literal, Protocol
+from uuid import UUID
 
 from agents import RunState, TResponseInputItem
 
@@ -118,6 +122,7 @@ class TurnInterrupt:
 
     interruptions: tuple[ApprovalRequest, ...]
     run_state: RunState[Any]
+    resume_token: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +156,7 @@ class EventSource:
     agent_name: str
     invocation_id: str
     parent_invocation_id: str | None = None
-    kind: Literal["root", "handoff", "agent_tool", "a2a"] = "root"
+    kind: Literal["root", "handoff", "agent_tool", "a2a", "mcp"] = "root"
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +180,7 @@ class NoOpEventSink:
     """Discard events when the caller does not request streaming output."""
 
     async def emit(self, event: RunEvent, *, source: EventSource) -> None:
-        pass
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +189,13 @@ class AgentContext:
 
     identity: IdentityContext
     event_sink: EventSink
+    request_id: str
+    session_id: str
+    deadline_epoch_seconds: float
+
+    @property
+    def deadline_exceeded(self) -> bool:
+        return time.time() >= self.deadline_epoch_seconds
 
 
 @dataclass(frozen=True, slots=True)
