@@ -36,6 +36,20 @@ def _prompt_auth(challenge: AuthRequiredInfo) -> None:
     input("Press Enter when ready to store a demo token and retry...")
 
 
+def _dedupe_auth_challenges(
+    challenges: list[AuthRequiredInfo],
+) -> list[AuthRequiredInfo]:
+    merged: list[AuthRequiredInfo] = []
+    seen: set[tuple[str, str]] = set()
+    for challenge in challenges:
+        key = (challenge.call_id, challenge.service)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(challenge)
+    return merged
+
+
 class AgentClient:
     def __init__(self, base_url: str, identity: IdentityHeaders):
         self._client = httpx.Client(
@@ -59,7 +73,7 @@ class AgentClient:
         response.raise_for_status()
 
     def _handle_auth_required(self, challenges: list[AuthRequiredInfo]) -> None:
-        for challenge in challenges:
+        for challenge in _dedupe_auth_challenges(challenges):
             _prompt_auth(challenge)
             self._store_demo_token(challenge.service)
 
@@ -185,8 +199,6 @@ class AgentClient:
                 self._display_event(event)
                 if event.event_type == "turn_interrupt":
                     interrupted = event.data
-                elif event.event_type == "auth_required":
-                    auth_required.append(AuthRequiredInfo.model_validate(event.data))
                 elif event.event_type == "turn_complete":
                     usage = event.data.get("usage", {})
                     print(

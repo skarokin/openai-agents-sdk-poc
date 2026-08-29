@@ -36,7 +36,7 @@ async def get_access_token(context: AgentContext, service: str) -> str:
     if token is None:
         # we raise here because if get_access_token is called, we expect a token to be present
         # this is because the execution flow is:
-        #   tool called -> (optional) HITL approval -> auth guardrail -> tool execution
+        #   tool call -> (optional) HITL approval -> auth guardrail -> tool call (which will prompt another HITL if applicable)
         # where auth guardrail -> tool execution can only happen if and only if the token is present & valid
         raise AuthTokenMissingError(service)
 

@@ -67,7 +67,9 @@ async def calculator(
 
 @tool(needs_approval=True)
 async def approval_demo(context: RunContextWrapper[AgentContext]) -> str:
-    """Return a confirmation after the caller approves this tool."""
+    """
+    This tool is a demo of the approval workflow. It will return a confirmation after the caller approves it.
+    """
 
     logger.info(
         "approval demo tool invoked",
@@ -78,7 +80,9 @@ async def approval_demo(context: RunContextWrapper[AgentContext]) -> str:
 
 @tool(tool_input_guardrails=[auth_guardrail("authentication_demo")])
 async def authentication_demo(context: RunContextWrapper[AgentContext]) -> str:
-    """This tool requires authentication."""
+    """
+    This tool is a demo of the authentication workflow. It will return a confirmation after the caller authenticates.
+    """
 
     access_token = await get_access_token(context.context, "authentication_demo")
 
@@ -97,7 +101,9 @@ async def authentication_demo(context: RunContextWrapper[AgentContext]) -> str:
     tool_input_guardrails=[auth_guardrail("auth_approval_demo")],
 )
 async def auth_approval_demo(context: RunContextWrapper[AgentContext]) -> str:
-    """This tool requires HITL approval and authentication."""
+    """
+    This tool is a demo of the authentication and approval workflow. It will return a confirmation after the caller authenticates and approves it.
+    """
 
     access_token = await get_access_token(context.context, "auth_approval_demo")
 
