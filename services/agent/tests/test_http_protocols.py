@@ -1,8 +1,8 @@
 """HTTP contract and protocol adapter smoke tests."""
 
-import unittest
 from collections.abc import AsyncIterator
 
+import pytest
 from fastapi.testclient import TestClient
 
 from agent.core.models import (
@@ -62,66 +62,67 @@ class FakeEventsFormatter:
         )
 
 
-class HttpProtocolsTest(unittest.TestCase):
-    def setUp(self):
-        self._client_context = TestClient(app)
-        self.client = self._client_context.__enter__()
+@pytest.fixture
+def client():
+    with TestClient(app) as test_client:
         app.state.complete_formatter = FakeCompleteFormatter()
         app.state.events_formatter = FakeEventsFormatter()
-        self.headers = {
-            "X-Subject-ID": "http-user",
-            "X-Actor-ID": "gateway",
-            "X-Roles": "calculator,approval_user",
-        }
-
-    def tearDown(self):
-        self._client_context.__exit__(None, None, None)
-
-    def test_rest_contract(self):
-        response = self.client.post(
-            "/v1/agent/runs",
-            headers=self.headers,
-            json={"input": "hello", "session_id": "http-session"},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "completed")
-        self.assertEqual(response.json()["output"], "http-user: hello")
-
-    def test_sse_contract(self):
-        response = self.client.post(
-            "/v1/agent/runs/stream",
-            headers=self.headers,
-            json={"input": "hello", "session_id": "http-session"},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("event: text_chunk", response.text)
-        self.assertIn("event: turn_complete", response.text)
-        self.assertIn("http-user: hello", response.text)
-
-    def test_identity_is_required(self):
-        response = self.client.post(
-            "/v1/agent/runs",
-            json={"input": "hello"},
-        )
-        self.assertEqual(response.status_code, 401)
-
-    def test_vault_token_endpoint_stores_for_caller(self):
-        response = self.client.post(
-            "/v1/agent/vault/tokens",
-            headers=self.headers,
-            json={
-                "service": "authentication_demo",
-                "access_token": "http-demo-token",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        stored = app.state.token_vault.peek(
-            IdentityContext(subject_id="http-user"),
-            "authentication_demo",
-        )
-        self.assertIsNotNone(stored)
-        self.assertEqual(stored.access_token, "http-demo-token")
+        yield test_client
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.fixture
+def headers():
+    return {
+        "X-Subject-ID": "http-user",
+        "X-Actor-ID": "gateway",
+        "X-Roles": "calculator,approval_user",
+    }
+
+
+def test_rest_contract(client, headers):
+    response = client.post(
+        "/v1/agent/runs",
+        headers=headers,
+        json={"input": "hello", "session_id": "http-session"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert response.json()["output"] == "http-user: hello"
+
+
+def test_sse_contract(client, headers):
+    response = client.post(
+        "/v1/agent/runs/stream",
+        headers=headers,
+        json={"input": "hello", "session_id": "http-session"},
+    )
+    assert response.status_code == 200
+    assert "event: text_chunk" in response.text
+    assert "event: turn_complete" in response.text
+    assert "http-user: hello" in response.text
+
+
+def test_identity_is_required(client):
+    response = client.post(
+        "/v1/agent/runs",
+        json={"input": "hello"},
+    )
+    assert response.status_code == 401
+
+
+def test_vault_token_endpoint_stores_for_caller(client, headers):
+    response = client.post(
+        "/v1/agent/vault/tokens",
+        headers=headers,
+        json={
+            "service": "authentication_demo",
+            "access_token": "http-demo-token",
+        },
+    )
+    assert response.status_code == 200
+    stored = app.state.token_vault.peek(
+        IdentityContext(subject_id="http-user"),
+        "authentication_demo",
+    )
+    assert stored is not None
+    assert stored.access_token == "http-demo-token"
