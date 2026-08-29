@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from agent.core.agent_factory import AgentFactory
 from agent.core.auth_guardrail import (
     MODEL_AUTH_MESSAGE,
     AuthTokenMissingError,
@@ -12,7 +13,6 @@ from agent.core.auth_guardrail import (
     auth_guardrail,
     get_access_token,
 )
-from agent.core.agent_factory import AgentFactory
 from agent.core.config import load_service_config
 from agent.core.models import AgentContext, IdentityContext, TurnComplete, TurnInterrupt
 from agent.core.session_manager import SessionManager

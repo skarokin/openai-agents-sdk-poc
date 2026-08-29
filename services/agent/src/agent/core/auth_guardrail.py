@@ -3,12 +3,15 @@
 from collections.abc import Mapping
 from typing import Any
 
-from agents import ToolGuardrailFunctionOutput, ToolInputGuardrail, ToolInputGuardrailData
+from agents import (
+    ToolGuardrailFunctionOutput,
+    ToolInputGuardrail,
+    ToolInputGuardrailData,
+)
 from agents.tool_guardrails import ToolInputGuardrailResult
 
 from .models import AgentContext, AuthRequired, EventSink, EventSource, RunEvent
 from .token_vault import AuthChallenge
-
 
 MODEL_AUTH_MESSAGE = (
     "The user has been asked to authenticate into the service. "

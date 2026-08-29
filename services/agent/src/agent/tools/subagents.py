@@ -6,7 +6,6 @@ Tools are decoupled from the subagent definition - they are defined and used els
 
 from agent.core.models import SubagentSpec
 
-
 SUBAGENT_INSTRUCTIONS = (
     "You are a focused subagent. Use the calculator for arithmetic. "
     "When explicitly asked to demonstrate approval, call approval_demo. "
