@@ -8,15 +8,15 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 
 from agent.common.http_dependencies import trusted_identity
+from agent.config import load_service_config
 from agent.core import SessionManager
 from agent.core.agent_factory import AgentFactory
-from agent.core.config import load_service_config
+from agent.core.auth import TokenVault
 from agent.core.models import IdentityContext
 from agent.core.observability import (
     setup_observability,
     shutdown_observability,
 )
-from agent.core.token_vault import TokenVault
 from agent.formatters import CompleteFormatter, EventsFormatter
 from agent.protocols import rest_router, sse_router
 from agent_common import HealthResponse, VaultTokenRequest, VaultTokenResponse

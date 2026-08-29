@@ -49,6 +49,7 @@ def bind_function_tool(
 
     if isinstance(implementation, FunctionTool):
         return replace(implementation, name=name, is_enabled=is_enabled)
+
     return function_tool(
         implementation,
         name_override=name,

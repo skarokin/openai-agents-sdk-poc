@@ -9,9 +9,8 @@ from agents import Agent, FunctionTool
 from agents.mcp import MCPServer
 
 from agent.common.binding import bind_function_tool, bind_subagent_tool
-
-from .config import ServiceConfig, ToolConfig
-from .models import AgentContext, SubagentSpec
+from agent.config import ServiceConfig, ToolConfig
+from agent.core.models import AgentContext, SubagentSpec
 
 logger = logging.getLogger(__name__)
 

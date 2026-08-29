@@ -9,7 +9,7 @@ from uuid import UUID
 from agents import Agent, AgentUpdatedStreamEvent, Runner
 
 from agent.core.agent_factory import AgentFactory
-from agent.core.auth_guardrail import auth_challenges_from_run
+from agent.core.auth import TokenVault, auth_challenges_from_run
 from agent.core.event_mapping import map_approvals, map_stream_event, map_usage
 from agent.core.models import (
     AgentContext,
@@ -27,7 +27,6 @@ from agent.core.models import (
 from agent.core.observability import bind_observability_context
 from agent.core.runtime import create_agent_context, create_run_config
 from agent.core.session_manager import SessionManager
-from agent.core.token_vault import TokenVault
 from agent.hooks import GLOBAL_DEADLINE_HOOK
 
 logger = logging.getLogger(__name__)

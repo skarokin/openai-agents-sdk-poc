@@ -18,8 +18,9 @@ from agents import (
     TResponseInputItem,
 )
 
+from agent.core.models import AgentContext
+
 from .event_mapping import approval_id
-from .models import AgentContext
 
 
 def _json_default(value: Any) -> Any:

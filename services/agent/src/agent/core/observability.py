@@ -22,7 +22,7 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.trace import Status, StatusCode
 
-from .models import IdentityContext
+from agent.core.models import IdentityContext
 
 _request_id = contextvars.ContextVar("request_id", default="-")
 _subject_id = contextvars.ContextVar("subject_id", default="-")

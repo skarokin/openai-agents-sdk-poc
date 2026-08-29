@@ -10,16 +10,16 @@ from agents.tool_guardrails import ToolInputGuardrailResult
 from conftest import CollectingSink, make_context
 
 from agent.core.agent_factory import AgentFactory
-from agent.core.auth_guardrail import (
+from agent.core.auth import (
     MODEL_AUTH_MESSAGE,
     AuthTokenMissingError,
+    TokenVault,
     auth_challenges_from_guardrail_results,
     auth_guardrail,
     get_access_token,
 )
 from agent.core.models import TurnComplete, TurnInterrupt
 from agent.core.session_manager import SessionManager
-from agent.core.token_vault import TokenVault
 from agent.formatters.complete import CompleteFormatter
 
 

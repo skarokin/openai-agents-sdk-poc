@@ -12,7 +12,7 @@ from agents import (
     ToolApprovalItem,
 )
 
-from .models import (
+from agent.core.models import (
     AgentChanged,
     ApprovalRequest,
     ReasoningChunk,
