@@ -8,7 +8,12 @@ from collections.abc import Callable
 from agents import RunContextWrapper
 from agents.decorators import tool
 
-from agent.core.auth import auth_guardrail, get_access_token
+from agent.core.auth import (
+    auth_guardrail,
+    auth_required,
+    get_access_token,
+    hitl_auth_required,
+)
 from agent.core.models import AgentContext
 
 logger = logging.getLogger(__name__)
@@ -78,7 +83,10 @@ async def approval_demo(context: RunContextWrapper[AgentContext]) -> str:
     return "tool approved!"
 
 
-@tool(tool_input_guardrails=[auth_guardrail("authentication_demo")])
+@tool(
+    needs_approval=auth_required("authentication_demo"),
+    tool_input_guardrails=[auth_guardrail("authentication_demo")],
+)
 async def authentication_demo(context: RunContextWrapper[AgentContext]) -> str:
     """
     This tool is a demo of the authentication workflow. It will return a confirmation after the caller authenticates.
@@ -97,7 +105,7 @@ async def authentication_demo(context: RunContextWrapper[AgentContext]) -> str:
 
 
 @tool(
-    needs_approval=True,
+    needs_approval=hitl_auth_required("auth_approval_demo"),
     tool_input_guardrails=[auth_guardrail("auth_approval_demo")],
 )
 async def auth_approval_demo(context: RunContextWrapper[AgentContext]) -> str:

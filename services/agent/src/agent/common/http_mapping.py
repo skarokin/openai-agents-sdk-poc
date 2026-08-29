@@ -52,6 +52,11 @@ def _approvals(
             tool_name=item.tool_name,
             arguments=dict(item.arguments),
             agent_name=item.agent_name,
+            requires_auth=item.requires_auth,
+            requires_approval=item.requires_approval,
+            authenticated=item.authenticated,
+            service=item.service,
+            authorization_url=item.authorization_url,
         )
         for item in interruptions
     )
@@ -168,6 +173,11 @@ def stream_event(
                         "tool_name": item.tool_name,
                         "arguments": dict(item.arguments),
                         "agent_name": item.agent_name,
+                        "requires_auth": item.requires_auth,
+                        "requires_approval": item.requires_approval,
+                        "authenticated": item.authenticated,
+                        "service": item.service,
+                        "authorization_url": item.authorization_url,
                     }
                     for item in event.interruptions
                 ],
