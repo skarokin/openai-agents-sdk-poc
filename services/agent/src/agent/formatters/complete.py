@@ -6,6 +6,7 @@ from uuid import UUID
 from agents import Agent, Runner
 
 from agent.core.agent_factory import AgentFactory
+from agent.core.auth_guardrail import AuthCollectingSink, auth_challenges_from_run
 from agent.core.event_mapping import map_approvals, map_usage
 from agent.core.models import (
     AgentContext,
@@ -20,21 +21,30 @@ from agent.core.models import (
 from agent.core.observability import bind_observability_context
 from agent.core.runtime import create_agent_context, create_run_config
 from agent.core.session_manager import SessionManager
+from agent.core.token_vault import TokenVault
 from agent.hooks import GLOBAL_DEADLINE_HOOK
 
 logger = logging.getLogger(__name__)
 
 
 class CompleteFormatter:
-    def __init__(self, factory: AgentFactory, sessions: SessionManager):
+    def __init__(
+        self,
+        factory: AgentFactory,
+        sessions: SessionManager,
+        token_vault: TokenVault,
+    ):
         self._factory = factory
         self._sessions = sessions
+        self._token_vault = token_vault
 
     async def _execute(
         self,
         query: Query,
         context: AgentContext,
         agent: Agent[AgentContext],
+        *,
+        auth_sink: AuthCollectingSink,
     ) -> CompleteResult:
         with bind_observability_context(
             context.identity,
@@ -71,6 +81,10 @@ class CompleteFormatter:
                     outcome=TurnComplete(
                         output=result.final_output,
                         usage=map_usage(result.context_wrapper.usage),
+                        auth_required=auth_challenges_from_run(
+                            result,
+                            emitted=auth_sink.collected,
+                        ),
                     )
                 )
             except Exception as exc:
@@ -93,11 +107,13 @@ class CompleteFormatter:
     ) -> CompleteResult:
         """Start a new agent run"""
 
+        auth_sink = AuthCollectingSink(NoOpEventSink())
         context = create_agent_context(
             identity,
-            NoOpEventSink(),
+            auth_sink,
             request_id=request_id,
             session_id=session_id,
+            token_vault=self._token_vault,
         )
 
         with bind_observability_context(identity, request_id):
@@ -107,6 +123,7 @@ class CompleteFormatter:
             Query(input=input_text),
             context,
             agent,
+            auth_sink=auth_sink,
         )
 
     async def resume(
@@ -124,11 +141,13 @@ class CompleteFormatter:
                 token,
                 identity.subject_id,
             )
+            auth_sink = AuthCollectingSink(NoOpEventSink())
             context = create_agent_context(
                 identity,
-                NoOpEventSink(),
+                auth_sink,
                 request_id=request_id,
                 session_id=session_id,
+                token_vault=self._token_vault,
             )
             with bind_observability_context(identity, request_id):
                 agent = await self._factory.create(context)
@@ -142,6 +161,7 @@ class CompleteFormatter:
                 Query(input=state),
                 context,
                 agent,
+                auth_sink=auth_sink,
             )
             if not isinstance(result.outcome, TurnError):
                 await self._sessions.delete_run_state(token)

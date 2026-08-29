@@ -112,6 +112,16 @@ class GuardrailTripped:
 
 
 @dataclass(frozen=True, slots=True)
+class AuthRequired:
+    """A tool was blocked because the caller lacks a vault token for a service."""
+
+    call_id: str
+    tool_name: str
+    service: str
+    authorization_url: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentChanged:
     """Execution was handed off to another agent."""
 
@@ -125,6 +135,7 @@ class TurnComplete:
 
     output: Any
     usage: UsageUpdate
+    auth_required: tuple[AuthRequired, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +165,7 @@ type RunEvent = (
     | ToolStart
     | ToolResult
     | GuardrailTripped
+    | AuthRequired
     | UsageUpdate
     | AgentChanged
     | TurnOutcome
@@ -194,6 +206,12 @@ class NoOpEventSink:
         return None
 
 
+def _default_token_vault():
+    from .token_vault import TokenVault
+
+    return TokenVault.from_environment()
+
+
 @dataclass(frozen=True, slots=True)
 class AgentContext:
     """Per-run dependencies and identity available to agents and tools."""
@@ -203,6 +221,7 @@ class AgentContext:
     request_id: str
     session_id: str
     deadline_epoch_seconds: float
+    token_vault: Any = field(default_factory=_default_token_vault)
 
     @property
     def deadline_exceeded(self) -> bool:

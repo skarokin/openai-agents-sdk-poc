@@ -2,18 +2,22 @@
 
 import os
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 import uvicorn
-from agent_common import HealthResponse
-from fastapi import FastAPI
+from agent_common import HealthResponse, VaultTokenRequest, VaultTokenResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
 
+from agent.common.http_dependencies import trusted_identity
 from agent.core import SessionManager
 from agent.core.agent_factory import AgentFactory
 from agent.core.config import load_service_config
+from agent.core.models import IdentityContext
 from agent.core.observability import (
     setup_observability,
     shutdown_observability,
 )
+from agent.core.token_vault import TokenVault
 from agent.formatters import CompleteFormatter, EventsFormatter
 from agent.protocols import rest_router, sse_router
 
@@ -22,10 +26,12 @@ from agent.protocols import rest_router, sse_router
 async def lifespan(app: FastAPI):
     config = load_service_config()
     sessions = SessionManager.from_environment()
+    token_vault = TokenVault.from_environment()
     factory = AgentFactory(config)
     app.state.session_manager = sessions
-    app.state.complete_formatter = CompleteFormatter(factory, sessions)
-    app.state.events_formatter = EventsFormatter(factory, sessions)
+    app.state.token_vault = token_vault
+    app.state.complete_formatter = CompleteFormatter(factory, sessions, token_vault)
+    app.state.events_formatter = EventsFormatter(factory, sessions, token_vault)
     try:
         yield
     finally:
@@ -46,6 +52,22 @@ def create_app() -> FastAPI:
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
         return HealthResponse()
+
+    @app.post("/v1/agent/vault/tokens", response_model=VaultTokenResponse)
+    async def store_vault_token(
+        body: VaultTokenRequest,
+        identity: Annotated[IdentityContext, Depends(trusted_identity)],
+        request: Request,
+    ) -> VaultTokenResponse:
+        try:
+            await request.app.state.token_vault.put(
+                identity,
+                body.service,
+                body.access_token,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return VaultTokenResponse(service=body.service)
 
     return app
 

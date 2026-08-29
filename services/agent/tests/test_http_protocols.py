@@ -104,6 +104,23 @@ class HttpProtocolsTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 401)
 
+    def test_vault_token_endpoint_stores_for_caller(self):
+        response = self.client.post(
+            "/v1/agent/vault/tokens",
+            headers=self.headers,
+            json={
+                "service": "authentication_demo",
+                "access_token": "http-demo-token",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        stored = app.state.token_vault.peek(
+            IdentityContext(subject_id="http-user"),
+            "authentication_demo",
+        )
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.access_token, "http-demo-token")
+
 
 if __name__ == "__main__":
     unittest.main()

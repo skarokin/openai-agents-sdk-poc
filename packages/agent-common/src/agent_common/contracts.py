@@ -68,12 +68,30 @@ class ApprovalRequest(ContractModel):
     agent_name: str | None = None
 
 
+class AuthRequiredInfo(ContractModel):
+    call_id: str
+    tool_name: str
+    service: str
+    authorization_url: str
+
+
+class VaultTokenRequest(ContractModel):
+    service: str = Field(min_length=1)
+    access_token: str = Field(min_length=1)
+
+
+class VaultTokenResponse(ContractModel):
+    ok: Literal[True] = True
+    service: str
+
+
 class CompletedResponse(ContractModel):
     status: Literal["completed"] = "completed"
     request_id: str
     session_id: str
     output: Any
     usage: Usage
+    auth_required: tuple[AuthRequiredInfo, ...] = ()
 
 
 class InterruptedResponse(ContractModel):
@@ -119,6 +137,7 @@ class StreamEvent(ContractModel):
         "tool_start",
         "tool_result",
         "guardrail_tripped",
+        "auth_required",
         "usage_update",
         "agent_changed",
         "turn_complete",

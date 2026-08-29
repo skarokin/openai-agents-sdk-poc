@@ -12,38 +12,27 @@ from agent_common import (
     AgentResumeRequest,
     AgentRunRequest,
     ApprovalDecision,
+    AuthRequiredInfo,
     IdentityHeaders,
     InterruptedResponse,
     StreamEvent,
+    VaultTokenRequest,
 )
 from pydantic import TypeAdapter
 
 _RESPONSE_ADAPTER = TypeAdapter(AgentResponse)
-_DEFAULT_ROLES = "calculator,approval_user,subagent_user,mcp_user"
+_DEFAULT_ROLES = "calculator,approval_user,subagent_user,mcp_user,auth_user"
 
 
 def _render(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, indent=2)
 
 
-def _decisions(interruptions: list[dict[str, Any]]) -> tuple[ApprovalDecision, ...]:
-    decisions: list[ApprovalDecision] = []
-    for interruption in interruptions:
-        tool = interruption.get("tool_name", "unknown_tool")
-        agent = interruption.get("agent_name") or "unknown agent"
-        arguments = _render(interruption.get("arguments", {}))
-        answer = input(
-            f"\nApprove {tool} from {agent} with arguments {arguments}? [y/N] "
-        )
-        decisions.append(
-            ApprovalDecision(
-                interruption_id=interruption["interruption_id"],
-                decision="approve"
-                if answer.strip().lower() in {"y", "yes"}
-                else "reject",
-            )
-        )
-    return tuple(decisions)
+def _prompt_auth(challenge: AuthRequiredInfo) -> None:
+    print(f"\nAuthentication required for {challenge.tool_name} ({challenge.service}).")
+    print(f"Open: {challenge.authorization_url}")
+    print("Continue after you have authorized externally.")
+    input("Press Enter when ready to store a demo token and retry...")
 
 
 class AgentClient:
@@ -58,37 +47,79 @@ class AgentClient:
     def close(self) -> None:
         self._client.close()
 
+    def _store_demo_token(self, service: str) -> None:
+        response = self._client.post(
+            "/v1/agent/vault/tokens",
+            json=VaultTokenRequest(
+                service=service,
+                access_token=f"demo-{uuid4().hex}",
+            ).model_dump(mode="json"),
+        )
+        response.raise_for_status()
+
+    def _handle_auth_required(self, challenges: list[AuthRequiredInfo]) -> None:
+        for challenge in challenges:
+            _prompt_auth(challenge)
+            self._store_demo_token(challenge.service)
+
+    def _decisions(self, interruptions: list[dict[str, Any]]) -> tuple[ApprovalDecision, ...]:
+        decisions: list[ApprovalDecision] = []
+        for interruption in interruptions:
+            tool = interruption.get("tool_name", "unknown_tool")
+            agent = interruption.get("agent_name") or "unknown agent"
+            arguments = _render(interruption.get("arguments", {}))
+            answer = input(
+                f"\nApprove {tool} from {agent} with arguments {arguments}? [y/N] "
+            )
+            decisions.append(
+                ApprovalDecision(
+                    interruption_id=interruption["interruption_id"],
+                    decision="approve"
+                    if answer.strip().lower() in {"y", "yes"}
+                    else "reject",
+                )
+            )
+        return tuple(decisions)
+
     def _post(self, path: str, body: dict[str, Any]):
         response = self._client.post(path, json=body)
         response.raise_for_status()
         return _RESPONSE_ADAPTER.validate_python(response.json())
 
     def run_rest(self, prompt: str, session_id: str):
-        response = self._post(
-            "/v1/agent/runs",
-            AgentRunRequest(input=prompt, session_id=session_id).model_dump(
-                mode="json"
-            ),
-        )
-        while isinstance(response, InterruptedResponse):
-            decisions = _decisions(
-                [item.model_dump(mode="json") for item in response.interruptions]
-            )
+        while True:
             response = self._post(
-                "/v1/agent/runs/resume",
-                AgentResumeRequest(
-                    resume_token=response.resume_token,
-                    decisions=decisions,
-                ).model_dump(mode="json"),
+                "/v1/agent/runs",
+                AgentRunRequest(input=prompt, session_id=session_id).model_dump(
+                    mode="json"
+                ),
             )
-        if response.status == "completed":
+            while isinstance(response, InterruptedResponse):
+                response = self._post(
+                    "/v1/agent/runs/resume",
+                    AgentResumeRequest(
+                        resume_token=response.resume_token,
+                        decisions=self._decisions(
+                            [
+                                item.model_dump(mode="json")
+                                for item in response.interruptions
+                            ]
+                        ),
+                    ).model_dump(mode="json"),
+                )
+            if response.status == "error":
+                print(f"[error: {response.code}] {response.message}")
+                return
+            if response.auth_required:
+                self._handle_auth_required(list(response.auth_required))
+                prompt = "Please retry the tool that required authentication."
+                continue
             print(_render(response.output))
             print(
                 f"[usage: {response.usage.total_tokens} tokens, "
                 f"{response.usage.requests} requests]"
             )
-        else:
-            print(f"[error: {response.code}] {response.message}")
+            return
 
     def _sse(
         self,
@@ -126,6 +157,10 @@ class AgentClient:
             print(
                 f"\n[{source} ← {data.get('tool_name')}: {_render(data.get('output'))}]"
             )
+        elif event.event_type == "auth_required":
+            print(
+                f"\n[auth required: {data.get('tool_name')} → {data.get('authorization_url')}]"
+            )
         elif event.event_type == "agent_changed":
             print(f"\n[agent changed → {data.get('agent_name')}]")
         elif event.event_type == "guardrail_tripped":
@@ -142,23 +177,38 @@ class AgentClient:
         ).model_dump(mode="json")
         while True:
             interrupted: dict[str, Any] | None = None
+            auth_required: list[AuthRequiredInfo] = []
             for event in self._sse(path, body):
                 self._display_event(event)
                 if event.event_type == "turn_interrupt":
                     interrupted = event.data
+                elif event.event_type == "auth_required":
+                    auth_required.append(AuthRequiredInfo.model_validate(event.data))
                 elif event.event_type == "turn_complete":
                     usage = event.data.get("usage", {})
                     print(
                         f"\n[usage: {usage.get('total_tokens', 0)} tokens, "
                         f"{usage.get('requests', 0)} requests]"
                     )
-            if interrupted is None:
-                return
-            body = AgentResumeRequest(
-                resume_token=interrupted["resume_token"],
-                decisions=_decisions(interrupted["interruptions"]),
-            ).model_dump(mode="json")
-            path = "/v1/agent/runs/stream/resume"
+                    for item in event.data.get("auth_required", []):
+                        auth_required.append(AuthRequiredInfo.model_validate(item))
+            if interrupted is not None:
+                body = AgentResumeRequest(
+                    resume_token=interrupted["resume_token"],
+                    decisions=self._decisions(interrupted["interruptions"]),
+                ).model_dump(mode="json")
+                path = "/v1/agent/runs/stream/resume"
+                continue
+            if auth_required:
+                self._handle_auth_required(auth_required)
+                prompt = "Please retry the tool that required authentication."
+                path = "/v1/agent/runs/stream"
+                body = AgentRunRequest(
+                    input=prompt,
+                    session_id=session_id,
+                ).model_dump(mode="json")
+                continue
+            return
 
 
 def _parser() -> argparse.ArgumentParser:

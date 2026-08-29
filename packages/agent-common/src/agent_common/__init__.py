@@ -9,6 +9,7 @@ from .contracts import (
     AgentRunRequest,
     ApprovalDecision,
     ApprovalRequest,
+    AuthRequiredInfo,
     CompletedResponse,
     ErrorResponse,
     EventSource,
@@ -17,6 +18,8 @@ from .contracts import (
     InterruptedResponse,
     StreamEvent,
     Usage,
+    VaultTokenRequest,
+    VaultTokenResponse,
 )
 
 __all__ = [
@@ -28,6 +31,7 @@ __all__ = [
     "AgentRunRequest",
     "ApprovalDecision",
     "ApprovalRequest",
+    "AuthRequiredInfo",
     "CompletedResponse",
     "ErrorResponse",
     "EventSource",
@@ -36,4 +40,6 @@ __all__ = [
     "InterruptedResponse",
     "StreamEvent",
     "Usage",
+    "VaultTokenRequest",
+    "VaultTokenResponse",
 ]

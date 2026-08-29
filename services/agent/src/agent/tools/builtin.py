@@ -8,6 +8,7 @@ from collections.abc import Callable
 from agents import RunContextWrapper
 from agents.decorators import tool
 
+from agent.core.auth_guardrail import auth_guardrail, get_access_token
 from agent.core.models import AgentContext
 
 logger = logging.getLogger(__name__)
@@ -73,3 +74,35 @@ async def approval_demo(context: RunContextWrapper[AgentContext]) -> str:
         extra={"subject_id": context.context.identity.subject_id},
     )
     return "tool approved!"
+
+
+@tool(tool_input_guardrails=[auth_guardrail("authentication_demo")])
+async def authentication_demo(context: RunContextWrapper[AgentContext]) -> str:
+    """This tool requires authentication."""
+
+    access_token = await get_access_token(context.context, "authentication_demo")
+
+    logger.info(
+        "authentication demo tool invoked",
+        extra={"subject_id": context.context.identity.subject_id, "access_token": access_token},
+    )
+    return "at this point, user has authenticated successfully!"
+
+
+@tool(
+    needs_approval=True,
+    tool_input_guardrails=[auth_guardrail("auth_approval_demo")],
+)
+async def auth_approval_demo(context: RunContextWrapper[AgentContext]) -> str:
+    """This tool requires HITL approval and authentication."""
+
+    access_token = await get_access_token(context.context, "auth_approval_demo")
+
+    logger.info(
+        "auth approval demo tool invoked",
+        extra={"subject_id": context.context.identity.subject_id, "access_token": access_token},
+    )
+    return (
+        "at this point, user has authenticated successfully "
+        "and the tool has been approved!"
+    )

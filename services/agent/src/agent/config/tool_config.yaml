@@ -18,6 +18,16 @@ open_subagent:
   enabled: true
   allowed_roles: [subagent_user]
 
+authentication_demo:
+  import_path: agent.tools.builtin:authentication_demo
+  enabled: true
+  allowed_roles: [auth_user]
+
+auth_approval_demo:
+  import_path: agent.tools.builtin:auth_approval_demo
+  enabled: true
+  allowed_roles: [auth_user]
+
 notes_mcp:
   type: mcp
   import_path: agent.tools.notes_mcp:create_notes_mcp

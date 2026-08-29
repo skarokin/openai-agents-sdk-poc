@@ -7,6 +7,7 @@ from agent_common import (
     ApprovalRequest as HttpApprovalRequest,
 )
 from agent_common import (
+    AuthRequiredInfo,
     CompletedResponse,
     ErrorResponse,
     InterruptedResponse,
@@ -19,6 +20,7 @@ from agent_common import (
 
 from agent.core.models import (
     AgentChanged,
+    AuthRequired,
     CompleteResult,
     EventEnvelope,
     GuardrailTripped,
@@ -56,6 +58,20 @@ def _approvals(
     )
 
 
+def _auth_required(
+    challenges,
+) -> tuple[AuthRequiredInfo, ...]:
+    return tuple(
+        AuthRequiredInfo(
+            call_id=item.call_id,
+            tool_name=item.tool_name,
+            service=item.service,
+            authorization_url=item.authorization_url,
+        )
+        for item in challenges
+    )
+
+
 def complete_response(
     result: CompleteResult,
     *,
@@ -69,6 +85,7 @@ def complete_response(
             session_id=session_id,
             output=outcome.output,
             usage=_usage(outcome.usage),
+            auth_required=_auth_required(outcome.auth_required),
         )
 
     if isinstance(outcome, TurnInterrupt):
@@ -124,6 +141,8 @@ def stream_event(
         )
     elif isinstance(event, GuardrailTripped):
         event_type, data = "guardrail_tripped", asdict(event)
+    elif isinstance(event, AuthRequired):
+        event_type, data = "auth_required", asdict(event)
     elif isinstance(event, UsageUpdate):
         event_type, data = "usage_update", asdict(event)
     elif isinstance(event, AgentChanged):
@@ -134,6 +153,7 @@ def stream_event(
             {
                 "output": event.output,
                 "usage": asdict(event.usage),
+                "auth_required": [asdict(item) for item in event.auth_required],
             },
         )
     elif isinstance(event, TurnInterrupt):

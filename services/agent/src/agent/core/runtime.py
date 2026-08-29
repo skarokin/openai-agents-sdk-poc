@@ -6,6 +6,7 @@ from agents import RunConfig
 
 from agent.hooks import SOFT_DEADLINE_SECONDS
 from .models import AgentContext, EventSink, IdentityContext
+from .token_vault import TokenVault
 
 
 def create_agent_context(
@@ -14,6 +15,7 @@ def create_agent_context(
     *,
     request_id: str,
     session_id: str,
+    token_vault: TokenVault,
 ) -> AgentContext:
     return AgentContext(
         identity=identity,
@@ -21,6 +23,7 @@ def create_agent_context(
         request_id=request_id,
         session_id=session_id,
         deadline_epoch_seconds=time.time() + SOFT_DEADLINE_SECONDS,
+        token_vault=token_vault,
     )
 
 

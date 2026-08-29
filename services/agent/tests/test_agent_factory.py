@@ -48,6 +48,8 @@ class AgentFactoryTest(unittest.IsolatedAsyncioTestCase):
                 "approval_demo",
                 "protected_subagent",
                 "open_subagent",
+                "authentication_demo",
+                "auth_approval_demo",
             },
         )
         self.assertEqual(await self._enabled_names(agent, context), [])
@@ -61,7 +63,12 @@ class AgentFactoryTest(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_full_roles_register_all_tools_from_global_config(self):
-        context = self._context("calculator", "approval_user", "subagent_user")
+        context = self._context(
+            "calculator",
+            "approval_user",
+            "subagent_user",
+            "auth_user",
+        )
         agent = await self.factory.create(context)
         self.assertEqual(
             set(await self._enabled_names(agent, context)),
@@ -70,6 +77,8 @@ class AgentFactoryTest(unittest.IsolatedAsyncioTestCase):
                 "approval_demo",
                 "protected_subagent",
                 "open_subagent",
+                "authentication_demo",
+                "auth_approval_demo",
             },
         )
         nested = next(tool for tool in agent.tools if tool.name == "open_subagent")

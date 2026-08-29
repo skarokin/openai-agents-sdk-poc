@@ -9,9 +9,11 @@ from uuid import UUID
 from agents import Agent, AgentUpdatedStreamEvent, Runner
 
 from agent.core.agent_factory import AgentFactory
+from agent.core.auth_guardrail import auth_challenges_from_run
 from agent.core.event_mapping import map_approvals, map_stream_event, map_usage
 from agent.core.models import (
     AgentContext,
+    AuthRequired,
     EventEnvelope,
     EventSink,
     EventSource,
@@ -25,6 +27,7 @@ from agent.core.models import (
 from agent.core.observability import bind_observability_context
 from agent.core.runtime import create_agent_context, create_run_config
 from agent.core.session_manager import SessionManager
+from agent.core.token_vault import TokenVault
 from agent.hooks import GLOBAL_DEADLINE_HOOK
 
 logger = logging.getLogger(__name__)
@@ -38,10 +41,13 @@ class QueueEventSink(EventSink):
         self._queue: asyncio.Queue[EventEnvelope | object] = asyncio.Queue()
         self._sequence = 0
         self._lock = asyncio.Lock()
+        self.auth_required: list[AuthRequired] = []
 
     async def emit(self, event: RunEvent, *, source: EventSource) -> None:
         async with self._lock:
             self._sequence += 1
+            if isinstance(event, AuthRequired):
+                self.auth_required.append(event)
             envelope = EventEnvelope(
                 sequence=self._sequence,
                 source=source,
@@ -58,9 +64,15 @@ class QueueEventSink(EventSink):
 
 
 class EventsFormatter:
-    def __init__(self, factory: AgentFactory, sessions: SessionManager):
+    def __init__(
+        self,
+        factory: AgentFactory,
+        sessions: SessionManager,
+        token_vault: TokenVault,
+    ):
         self._factory = factory
         self._sessions = sessions
+        self._token_vault = token_vault
 
     async def _produce(
         self,
@@ -129,6 +141,10 @@ class EventsFormatter:
                     terminal = TurnComplete(
                         output=streamed.final_output,
                         usage=map_usage(streamed.context_wrapper.usage),
+                        auth_required=auth_challenges_from_run(
+                            streamed,
+                            emitted=tuple(sink.auth_required),
+                        ),
                     )
 
                 await sink.emit(terminal, source=terminal_source)
@@ -199,6 +215,7 @@ class EventsFormatter:
             sink,
             request_id=request_id,
             session_id=session_id,
+            token_vault=self._token_vault,
         )
         with bind_observability_context(identity, request_id):
             agent = await self._factory.create(context)
@@ -231,6 +248,7 @@ class EventsFormatter:
                 sink,
                 request_id=request_id,
                 session_id=session_id,
+                token_vault=self._token_vault,
             )
             with bind_observability_context(identity, request_id):
                 agent = await self._factory.create(context)
