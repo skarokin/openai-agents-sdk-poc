@@ -12,7 +12,7 @@ from agent.core.agent_factory import AgentFactory
 from agent.core.models import TextChunk
 from agent.core.runtime import create_run_config
 from agent.core.session_manager import SessionManager
-from agent.hooks import GLOBAL_DEADLINE_HOOK, SOFT_DEADLINE_MESSAGE
+from agent.controls.hooks import GLOBAL_DEADLINE_HOOK, SOFT_DEADLINE_MESSAGE
 
 
 @pytest.mark.asyncio

@@ -22,7 +22,7 @@ class Query:
 
 
 def _default_token_vault():
-    from agent.core.auth.token_vault import TokenVault
+    from agent.controls.guardrails.vault import TokenVault
 
     return TokenVault.from_environment()
 
