@@ -1,11 +1,10 @@
-"""Shared runtime construction for complete and streaming formatters."""
+"""Shared runtime construction for formatters."""
 
 import time
 
-from agents import RunConfig, ToolExecutionConfig
+from agents import RunConfig
 
-from agent.hooks import SOFT_DEADLINE_SECONDS, soft_deadline_model_filter
-
+from agent.hooks import SOFT_DEADLINE_SECONDS
 from .models import AgentContext, EventSink, IdentityContext
 
 
@@ -36,8 +35,4 @@ def create_run_config(context: AgentContext) -> RunConfig:
             "actor_id": context.identity.actor_id or "",
             "roles": ",".join(sorted(context.identity.roles)),
         },
-        call_model_input_filter=soft_deadline_model_filter,
-        tool_execution=ToolExecutionConfig(
-            pre_approval_tool_input_guardrails=True,
-        ),
     )

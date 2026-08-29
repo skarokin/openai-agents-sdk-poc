@@ -70,15 +70,18 @@ def complete_response(
             output=outcome.output,
             usage=_usage(outcome.usage),
         )
+
     if isinstance(outcome, TurnInterrupt):
         if outcome.resume_token is None:
             raise RuntimeError("Interrupted result was not persisted")
+
         return InterruptedResponse(
             request_id=request_id,
             session_id=session_id,
             resume_token=outcome.resume_token,
             interruptions=_approvals(outcome.interruptions),
         )
+
     return ErrorResponse(
         request_id=request_id,
         session_id=session_id,

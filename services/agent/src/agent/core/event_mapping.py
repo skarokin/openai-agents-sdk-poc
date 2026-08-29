@@ -54,11 +54,13 @@ def map_stream_event(
         delta = _value(event.data, "delta")
         if event_type == "response.output_text.delta" and isinstance(delta, str):
             return [TextChunk(delta=delta)]
+
         if event_type in {
             "response.reasoning_summary_text.delta",
             "response.reasoning_text.delta",
         } and isinstance(delta, str):
             return [ReasoningChunk(delta=delta)]
+
         return []
 
     if isinstance(event, AgentUpdatedStreamEvent):
@@ -82,6 +84,7 @@ def map_stream_event(
                 arguments=_arguments(_value(raw_item, "arguments")),
             )
         ]
+
     if event.name == "tool_output":
         return [
             ToolResult(
@@ -100,6 +103,7 @@ def map_stream_event(
                 output=getattr(item, "output", _value(raw_item, "output")),
             )
         ]
+
     return []
 
 

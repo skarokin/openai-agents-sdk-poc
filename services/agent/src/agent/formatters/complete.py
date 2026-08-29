@@ -91,14 +91,18 @@ class CompleteFormatter:
         request_id: str,
         session_id: str,
     ) -> CompleteResult:
+        """Start a new agent run"""
+
         context = create_agent_context(
             identity,
             NoOpEventSink(),
             request_id=request_id,
             session_id=session_id,
         )
+
         with bind_observability_context(identity, request_id):
-            agent = self._factory.create(context)
+            agent = await self._factory.create(context)
+
         return await self._execute(
             Query(input=input_text),
             context,
@@ -113,6 +117,8 @@ class CompleteFormatter:
         *,
         request_id: str,
     ) -> tuple[CompleteResult, str]:
+        """Resume an interrupted agent run"""
+
         async with self._sessions.lock_run_state(token):
             session_id = self._sessions.run_state_session_id(
                 token,
@@ -125,7 +131,7 @@ class CompleteFormatter:
                 session_id=session_id,
             )
             with bind_observability_context(identity, request_id):
-                agent = self._factory.create(context)
+                agent = await self._factory.create(context)
             state, _ = await self._sessions.load_run_state(
                 token,
                 agent=agent,

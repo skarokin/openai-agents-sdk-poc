@@ -19,7 +19,7 @@ from agent_common import (
 from pydantic import TypeAdapter
 
 _RESPONSE_ADAPTER = TypeAdapter(AgentResponse)
-_DEFAULT_ROLES = "calculator,approval_user,subagent_user"
+_DEFAULT_ROLES = "calculator,approval_user,subagent_user,mcp_user"
 
 
 def _render(value: Any) -> str:

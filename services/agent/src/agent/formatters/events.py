@@ -71,6 +71,7 @@ class EventsFormatter:
     ) -> None:
         current_agent_name = agent.name
         streamed = None
+
         try:
             with bind_observability_context(
                 context.identity,
@@ -88,17 +89,20 @@ class EventsFormatter:
                         context.identity.subject_id,
                     ),
                 )
+
                 async for sdk_event in streamed.stream_events():
                     source = EventSource(
                         agent_name=current_agent_name,
                         invocation_id=context.request_id,
                         kind="root",
                     )
+
                     for event in map_stream_event(
                         sdk_event,
                         previous_agent_name=current_agent_name,
                     ):
                         await sink.emit(event, source=source)
+
                     if isinstance(sdk_event, AgentUpdatedStreamEvent):
                         current_agent_name = sdk_event.new_agent.name
 
@@ -107,6 +111,7 @@ class EventsFormatter:
                     invocation_id=context.request_id,
                     kind="root",
                 )
+
                 if streamed.interruptions:
                     state = streamed.to_state()
                     token = await self._sessions.save_run_state(
@@ -114,6 +119,7 @@ class EventsFormatter:
                         session_id=context.session_id,
                         owner_subject_id=context.identity.subject_id,
                     )
+
                     terminal: RunEvent = TurnInterrupt(
                         interruptions=map_approvals(streamed.interruptions),
                         run_state=state,
@@ -124,10 +130,13 @@ class EventsFormatter:
                         output=streamed.final_output,
                         usage=map_usage(streamed.context_wrapper.usage),
                     )
+
                 await sink.emit(terminal, source=terminal_source)
+
         except asyncio.CancelledError:
             if streamed is not None:
                 streamed.cancel()
+
             raise
         except Exception as exc:
             logger.exception(
@@ -182,6 +191,8 @@ class EventsFormatter:
         request_id: str,
         session_id: str,
     ) -> AsyncIterator[EventEnvelope]:
+        """Stream an agent run"""
+
         sink = QueueEventSink()
         context = create_agent_context(
             identity,
@@ -190,7 +201,7 @@ class EventsFormatter:
             session_id=session_id,
         )
         with bind_observability_context(identity, request_id):
-            agent = self._factory.create(context)
+            agent = await self._factory.create(context)
         async for event in self._stream_prepared(
             Query(input=input_text),
             context,
@@ -207,6 +218,8 @@ class EventsFormatter:
         *,
         request_id: str,
     ) -> AsyncIterator[tuple[EventEnvelope, str]]:
+        """Resume an interrupted agent run"""
+
         async with self._sessions.lock_run_state(token):
             session_id = self._sessions.run_state_session_id(
                 token,
@@ -220,7 +233,7 @@ class EventsFormatter:
                 session_id=session_id,
             )
             with bind_observability_context(identity, request_id):
-                agent = self._factory.create(context)
+                agent = await self._factory.create(context)
             state, _ = await self._sessions.load_run_state(
                 token,
                 agent=agent,

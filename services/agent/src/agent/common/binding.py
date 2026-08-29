@@ -1,13 +1,14 @@
 """Out-of-band binding of function tools and subagent specs to the SDK."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from agents import Agent, AgentToolStreamEvent, FunctionTool, function_tool
 
 from agent.core.event_mapping import map_stream_event
 from agent.core.models import AgentContext, EventSource, SubagentSpec
-from agent.hooks import GLOBAL_DEADLINE_HOOK, soft_deadline_tool_guardrail
+from agent.hooks import GLOBAL_DEADLINE_HOOK
 
 
 def nested_stream_handler(context: AgentContext, fallback_invocation_id: str):
@@ -21,6 +22,7 @@ def nested_stream_handler(context: AgentContext, fallback_invocation_id: str):
         tool_call = payload["tool_call"]
         invocation_id = getattr(tool_call, "call_id", None) or fallback_invocation_id
         previous = previous_agents.get(invocation_id)
+
         for normalized in map_stream_event(event, previous_agent_name=previous):
             await context.event_sink.emit(
                 normalized,
@@ -31,22 +33,26 @@ def nested_stream_handler(context: AgentContext, fallback_invocation_id: str):
                     kind="agent_tool",
                 ),
             )
+
         previous_agents[invocation_id] = agent.name
 
     return on_stream
 
 
 def bind_function_tool(
-    implementation: Callable,
+    implementation: FunctionTool | Callable,
     *,
     name: str,
-    needs_approval: bool,
+    is_enabled: bool,
 ) -> FunctionTool:
+    """Bind a function tool to the agent."""
+
+    if isinstance(implementation, FunctionTool):
+        return replace(implementation, name=name, is_enabled=is_enabled)
     return function_tool(
         implementation,
         name_override=name,
-        needs_approval=needs_approval,
-        tool_input_guardrails=[soft_deadline_tool_guardrail],
+        is_enabled=is_enabled,
     )
 
 
@@ -58,21 +64,23 @@ def bind_subagent_tool(
     model: Any,
     max_turns: int,
     context: AgentContext,
-    needs_approval: bool,
+    is_enabled: bool,
 ) -> FunctionTool:
+    """Bind an agent-as-tool to the parent agent."""
+
     agent = Agent[AgentContext](
         name=spec.agent_name,
         instructions=spec.instructions,
         model=model,
         tools=tools,
     )
-    tool = agent.as_tool(
+
+    return agent.as_tool(
         tool_name=name,
         tool_description=spec.description,
-        needs_approval=needs_approval,
+        needs_approval=spec.needs_approval,
+        is_enabled=is_enabled,
         hooks=GLOBAL_DEADLINE_HOOK,
         max_turns=max_turns,
         on_stream=nested_stream_handler(context, name),
     )
-    tool.tool_input_guardrails = [soft_deadline_tool_guardrail]
-    return tool

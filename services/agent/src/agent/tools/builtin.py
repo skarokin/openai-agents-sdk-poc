@@ -6,6 +6,7 @@ import operator
 from collections.abc import Callable
 
 from agents import RunContextWrapper
+from agents.decorators import tool
 
 from agent.core.models import AgentContext
 
@@ -42,6 +43,7 @@ def _evaluate(node: ast.AST) -> float:
     raise ValueError("Expression contains unsupported syntax")
 
 
+@tool
 async def calculator(
     context: RunContextWrapper[AgentContext],
     expression: str,
@@ -62,6 +64,7 @@ async def calculator(
     return f"{result:g}"
 
 
+@tool(needs_approval=True)
 async def approval_demo(context: RunContextWrapper[AgentContext]) -> str:
     """Return a confirmation after the caller approves this tool."""
 

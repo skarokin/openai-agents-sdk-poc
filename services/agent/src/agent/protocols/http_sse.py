@@ -4,12 +4,6 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 from uuid import uuid4
 
-from agent_common import (
-    AgentResumeRequest,
-    AgentRunRequest,
-    EventSource,
-    StreamEvent,
-)
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -17,13 +11,19 @@ from agent.core.models import IdentityContext
 from agent.core.observability import bind_observability_context
 from agent.core.session_manager import SessionManager
 from agent.formatters import EventsFormatter
-
 from agent.common.http_dependencies import (
     events_formatter,
     session_manager,
     trusted_identity,
 )
 from agent.common.http_mapping import stream_event
+from agent_common import (
+    AgentResumeRequest,
+    AgentRunRequest,
+    EventSource,
+    StreamEvent,
+)
+
 
 router = APIRouter(prefix="/v1/agent", tags=["agent-sse"])
 
@@ -70,6 +70,7 @@ async def stream_agent(
                     request_id=request_id,
                     session_id=session_id,
                 )
+
                 yield _encode_sse(event)
 
     return _response(events())

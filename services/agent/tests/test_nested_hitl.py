@@ -13,15 +13,14 @@ from agent.core.config import load_service_config
 from agent.core.models import (
     AgentContext,
     EventSource,
-    GuardrailTripped,
     IdentityContext,
     RunEvent,
     TextChunk,
 )
 from agent.core.runtime import create_run_config
 from agent.core.session_manager import SessionManager
-from agent.hooks import GLOBAL_DEADLINE_HOOK
-from agents import Runner, ToolExecutionConfig
+from agent.hooks import GLOBAL_DEADLINE_HOOK, SOFT_DEADLINE_MESSAGE
+from agents import Runner
 from agents.agent_output import AgentOutputSchemaBase
 from agents.handoffs import Handoff
 from agents.items import (
@@ -107,6 +106,7 @@ def _response(output: list[TResponseOutputItem]) -> Response:
 class SequenceModel(Model):
     def __init__(self, outputs: list[list[TResponseOutputItem]]):
         self.outputs = outputs
+        self.seen_inputs: list[str | list[TResponseInputItem]] = []
 
     def _next(self) -> list[TResponseOutputItem]:
         if not self.outputs:
@@ -127,9 +127,9 @@ class SequenceModel(Model):
         conversation_id: str | None,
         prompt: Any | None,
     ) -> ModelResponse:
+        self.seen_inputs.append(input)
         del (
             system_instructions,
-            input,
             model_settings,
             tools,
             output_schema,
@@ -240,10 +240,9 @@ class CollectingSink:
 
 
 class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
-    async def test_soft_deadline_rejects_advertised_tool_without_failing_run(self):
+    async def test_soft_deadline_steers_model_without_failing_run(self):
         model = SequenceModel(
             [
-                [_tool_call("calculator", "late-calculator", {"expression": "2+2"})],
                 [_message("deadline fallback", "deadline-message")],
             ]
         )
@@ -259,7 +258,7 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
             session_id="deadline-session",
             deadline_epoch_seconds=time.time() - 1,
         )
-        agent = factory.create(context)
+        agent = await factory.create(context)
         run_config = create_run_config(context)
         run_config.tracing_disabled = True
 
@@ -272,8 +271,15 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.final_output, "deadline fallback")
+        self.assertTrue(model.seen_inputs)
+        first_input = model.seen_inputs[0]
+        self.assertIsInstance(first_input, list)
         self.assertTrue(
-            any(isinstance(event, GuardrailTripped) for event, _ in sink.events)
+            any(
+                isinstance(item, dict)
+                and item.get("content") == SOFT_DEADLINE_MESSAGE
+                for item in first_input
+            )
         )
 
     async def test_nested_approvals_bubble_to_root_state(self):
@@ -303,11 +309,8 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
             session_id="test-session",
             deadline_epoch_seconds=time.time() + 60,
         )
-        agent = factory.create(context)
-        run_config = RunConfig(
-            tracing_disabled=True,
-            tool_execution=ToolExecutionConfig(pre_approval_tool_input_guardrails=True),
-        )
+        agent = await factory.create(context)
+        run_config = RunConfig(tracing_disabled=True)
 
         first = await Runner.run(
             agent,
@@ -330,7 +333,7 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(PermissionError):
             sessions.run_state_session_id(first_token, "different-user")
-        agent = factory.create(context)
+        agent = await factory.create(context)
         first_state, _ = await sessions.load_run_state(
             first_token,
             agent=agent,
@@ -355,7 +358,7 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
             session_id=context.session_id,
             owner_subject_id=context.identity.subject_id,
         )
-        agent = factory.create(context)
+        agent = await factory.create(context)
         second_state, _ = await sessions.load_run_state(
             second_token,
             agent=agent,
@@ -409,11 +412,8 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
             session_id="open-test-session",
             deadline_epoch_seconds=time.time() + 60,
         )
-        agent = factory.create(context)
-        run_config = RunConfig(
-            tracing_disabled=True,
-            tool_execution=ToolExecutionConfig(pre_approval_tool_input_guardrails=True),
-        )
+        agent = await factory.create(context)
+        run_config = RunConfig(tracing_disabled=True)
 
         first = await Runner.run(
             agent,
@@ -438,6 +438,75 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(final.interruptions)
         self.assertEqual(final.final_output, "open root complete")
+
+    async def test_local_mcp_requires_approval_only_for_delete_note(self):
+        config = load_service_config()
+        model = SequenceModel(
+            [
+                [_tool_call("list_notes", "call-list", {})],
+                [
+                    _tool_call(
+                        "delete_note",
+                        "call-delete",
+                        {"note_id": "1"},
+                    )
+                ],
+                [_message("listed then deleted", "mcp-message")],
+            ]
+        )
+        factory = AgentFactory(config, model=model)
+        try:
+            denied = await factory.create(
+                AgentContext(
+                    identity=IdentityContext(
+                        subject_id="mcp-user",
+                        roles=frozenset({"calculator"}),
+                    ),
+                    event_sink=CollectingSink(),
+                    request_id="mcp-denied",
+                    session_id="mcp-denied",
+                    deadline_epoch_seconds=time.time() + 60,
+                )
+            )
+            self.assertEqual(denied.mcp_servers, [])
+            self.assertEqual(factory._mcp_servers, {})
+
+            context = AgentContext(
+                identity=IdentityContext(
+                    subject_id="mcp-user",
+                    roles=frozenset({"mcp_user"}),
+                ),
+                event_sink=CollectingSink(),
+                request_id="mcp-request",
+                session_id="mcp-session",
+                deadline_epoch_seconds=time.time() + 60,
+            )
+            agent = await factory.create(context)
+            run_config = RunConfig(tracing_disabled=True)
+
+            first = await Runner.run(
+                agent,
+                "List notes, then delete note 1",
+                context=context,
+                run_config=run_config,
+            )
+            self.assertEqual(
+                [item.name for item in first.interruptions],
+                ["delete_note"],
+            )
+
+            state = first.to_state()
+            state.approve(first.interruptions[0])
+            final = await Runner.run(
+                agent,
+                state,
+                context=context,
+                run_config=run_config,
+            )
+            self.assertFalse(final.interruptions)
+            self.assertEqual(final.final_output, "listed then deleted")
+        finally:
+            await factory.close()
 
 
 if __name__ == "__main__":

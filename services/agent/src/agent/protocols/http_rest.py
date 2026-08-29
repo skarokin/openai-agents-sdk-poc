@@ -3,15 +3,15 @@
 from typing import Annotated
 from uuid import uuid4
 
-from agent_common import AgentResponse, AgentResumeRequest, AgentRunRequest
 from fastapi import APIRouter, Depends, HTTPException
 
 from agent.core.models import IdentityContext
 from agent.core.observability import bind_observability_context
 from agent.formatters import CompleteFormatter
-
 from agent.common.http_dependencies import complete_formatter, trusted_identity
 from agent.common.http_mapping import complete_response
+from agent_common import AgentResponse, AgentResumeRequest, AgentRunRequest
+
 
 router = APIRouter(prefix="/v1/agent", tags=["agent-rest"])
 
@@ -31,6 +31,7 @@ async def run_agent(
             request_id=request_id,
             session_id=session_id,
         )
+
     return complete_response(
         result,
         request_id=request_id,
@@ -46,6 +47,7 @@ async def resume_agent(
 ):
     request_id = uuid4().hex
     decisions = {item.interruption_id: item.decision for item in body.decisions}
+
     if len(decisions) != len(body.decisions):
         raise HTTPException(status_code=400, detail="Duplicate interruption IDs")
     try:
@@ -62,6 +64,7 @@ async def resume_agent(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     return complete_response(
         result,
         request_id=request_id,

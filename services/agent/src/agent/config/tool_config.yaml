@@ -2,19 +2,29 @@ calculator:
   import_path: agent.tools.builtin:calculator
   enabled: true
   allowed_roles: [calculator]
-  requires_approval: false
+
 approval_demo:
   import_path: agent.tools.builtin:approval_demo
   enabled: true
   allowed_roles: [approval_user]
-  requires_approval: true
+
 protected_subagent:
   import_path: agent.tools.subagents:protected_subagent
   enabled: true
   allowed_roles: [subagent_user]
-  requires_approval: true
+
 open_subagent:
   import_path: agent.tools.subagents:open_subagent
   enabled: true
   allowed_roles: [subagent_user]
-  requires_approval: false
+
+notes_mcp:
+  type: mcp
+  import_path: agent.tools.notes_mcp:create_notes_mcp
+  enabled: true
+  allowed_roles: [mcp_user]
+  tools:
+    list_notes:
+      allowed_roles: [mcp_user]
+    delete_note:
+      allowed_roles: [mcp_user]

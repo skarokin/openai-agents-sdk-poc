@@ -7,7 +7,8 @@ import uvicorn
 from agent_common import HealthResponse
 from fastapi import FastAPI
 
-from agent.core import AgentFactory, SessionManager
+from agent.core import SessionManager
+from agent.core.agent_factory import AgentFactory
 from agent.core.config import load_service_config
 from agent.core.observability import (
     setup_observability,
@@ -25,8 +26,11 @@ async def lifespan(app: FastAPI):
     app.state.session_manager = sessions
     app.state.complete_formatter = CompleteFormatter(factory, sessions)
     app.state.events_formatter = EventsFormatter(factory, sessions)
-    yield
-    shutdown_observability()
+    try:
+        yield
+    finally:
+        await factory.close()
+        shutdown_observability()
 
 
 def create_app() -> FastAPI:

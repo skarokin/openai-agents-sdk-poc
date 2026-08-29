@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,11 +19,16 @@ class AgentConfig(ConfigModel):
     max_turns: int = Field(default=10, ge=1)
 
 
+class McpToolConfig(ConfigModel):
+    allowed_roles: frozenset[str] = Field(default_factory=frozenset)
+
+
 class ToolConfig(ConfigModel):
     import_path: str
+    type: Literal["function", "mcp"] = "function"
     enabled: bool = True
     allowed_roles: frozenset[str] = Field(default_factory=frozenset)
-    requires_approval: bool = False
+    tools: dict[str, McpToolConfig] = Field(default_factory=dict)
 
 
 class ServiceConfig(ConfigModel):
