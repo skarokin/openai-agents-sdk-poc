@@ -95,6 +95,11 @@ class ApprovalRequest:
     tool_name: str
     arguments: Mapping[str, Any]
     agent_name: str | None = None
+    requires_auth: bool = False
+    requires_approval: bool = True
+    authenticated: bool = False
+    service: str | None = None
+    authorization_url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

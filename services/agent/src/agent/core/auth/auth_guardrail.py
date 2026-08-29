@@ -1,4 +1,4 @@
-"""Vault-backed auth checks as tool input guardrails."""
+"""Vault token access and server-side auth enforcement guardrails."""
 
 from collections.abc import Mapping
 from typing import Any
@@ -8,20 +8,19 @@ from agents import (
     ToolInputGuardrail,
     ToolInputGuardrailData,
 )
-from agents.tool_guardrails import ToolInputGuardrailResult
 
 from agent.core.models import (
     AgentContext,
     AuthRequired,
-    EventSink,
     EventSource,
-    RunEvent,
 )
 
 from .token_vault import AuthChallenge
 
-MODEL_AUTH_MESSAGE = (
-    "The user has been asked to authenticate into the service. The tool did not run."
+AUTH_REJECT_MESSAGE = (
+    "The tool did not run because the caller is not authenticated. "
+    "The user must complete authentication via the provided authorization URL "
+    "before this tool can be executed. "
 )
 
 
@@ -34,10 +33,6 @@ class AuthTokenMissingError(RuntimeError):
 async def get_access_token(context: AgentContext, service: str) -> str:
     token = await context.token_vault.get(context.identity, service)
     if token is None:
-        # we raise here because if get_access_token is called, we expect a token to be present
-        # this is because the execution flow is:
-        #   tool call -> (optional) HITL approval -> auth guardrail -> tool call (which will prompt another HITL if applicable)
-        # where auth guardrail -> tool execution can only happen if and only if the token is present & valid
         raise AuthTokenMissingError(service)
 
     return token.access_token
@@ -45,9 +40,9 @@ async def get_access_token(context: AgentContext, service: str) -> str:
 
 def auth_guardrail(service: str) -> ToolInputGuardrail[AgentContext]:
     """
-    Return a guardrail that blocks the tool when the vault has no token.
+    Reject tool execution with a model-visible error when the vault has no token.
 
-    Runs after HITL approval. On miss, rejects with structured output_info and emits AuthRequired
+    All tools that require authentication must use this guardrail.
     """
 
     async def check(data: ToolInputGuardrailData) -> ToolGuardrailFunctionOutput:
@@ -58,6 +53,8 @@ def auth_guardrail(service: str) -> ToolInputGuardrail[AgentContext]:
         if await context.token_vault.has_token(context.identity, service):
             return ToolGuardrailFunctionOutput.allow()
 
+        # at this point, vault does not have a token - we need to send an AuthRequired event
+        # the caller is responsible for receiving and parsing the AuthRequired event
         challenge = context.token_vault.challenge(service)
         payload = _auth_payload(
             challenge=challenge,
@@ -79,7 +76,7 @@ def auth_guardrail(service: str) -> ToolInputGuardrail[AgentContext]:
             ),
         )
         return ToolGuardrailFunctionOutput.reject_content(
-            MODEL_AUTH_MESSAGE,
+            AUTH_REJECT_MESSAGE,
             output_info=payload,
         )
 
@@ -101,79 +98,9 @@ def _auth_payload(
     }
 
 
-def auth_challenges_from_guardrail_results(
-    results: list[ToolInputGuardrailResult],
-) -> tuple[AuthRequired, ...]:
-    """Collect auth challenges from tool input guardrail rejections."""
-
-    challenges: list[AuthRequired] = []
-    for result in results:
-        payload = _auth_info(result.output)
-        if payload is None:
-            continue
-        challenges.append(_auth_required_from_payload(payload))
-    return tuple(challenges)
-
-
-def auth_challenges_from_run(
-    result: Any,
-    *,
-    emitted: tuple[AuthRequired, ...] = (),
-) -> tuple[AuthRequired, ...]:
-    from_guardrails = auth_challenges_from_guardrail_results(
-        result.tool_input_guardrail_results,
-    )
-    return _merge_auth_challenges(from_guardrails, emitted)
-
-
-def _merge_auth_challenges(
-    *groups: tuple[AuthRequired, ...],
-) -> tuple[AuthRequired, ...]:
-    merged: list[AuthRequired] = []
-    seen: set[tuple[str, str]] = set()
-    for group in groups:
-        for item in group:
-            key = (item.call_id, item.service)
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append(item)
-    return tuple(merged)
-
-
-class AuthCollectingSink:
-    """
-    Capture AuthRequired events while delegating to another sink.
-
-    A new sink is required because auth is signaled via an event, not part of tool result or agent run result.
-    The complete fformatter doesn't stream events to the client, so we need something to capture these events
-    until the turn is complete.
-    """
-
-    def __init__(self, inner: EventSink):
-        self._inner = inner
-        self.auth_required: list[AuthRequired] = []
-
-    async def emit(self, event: RunEvent, *, source: EventSource) -> None:
-        if isinstance(event, AuthRequired):
-            self.auth_required.append(event)
-        await self._inner.emit(event, source=source)
-
-    @property
-    def collected(self) -> tuple[AuthRequired, ...]:
-        return tuple(self.auth_required)
-
-
-def _auth_required_from_payload(payload: Mapping[str, Any]) -> AuthRequired:
-    return AuthRequired(
-        call_id=str(payload.get("call_id", "")),
-        tool_name=str(payload.get("tool_name", "unknown_tool")),
-        service=str(payload["service"]),
-        authorization_url=str(payload["authorization_url"]),
-    )
-
-
-def _auth_info(output: ToolGuardrailFunctionOutput) -> Mapping[str, Any] | None:
+def auth_info_from_guardrail_output(
+    output: ToolGuardrailFunctionOutput,
+) -> Mapping[str, Any] | None:
     behavior = output.behavior
     if not isinstance(behavior, Mapping) or behavior.get("type") != "reject_content":
         return None

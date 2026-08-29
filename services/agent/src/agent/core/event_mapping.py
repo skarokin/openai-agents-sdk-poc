@@ -7,13 +7,16 @@ from typing import Any
 from agents import (
     AgentUpdatedStreamEvent,
     RawResponsesStreamEvent,
+    RunContextWrapper,
     RunItemStreamEvent,
     StreamEvent,
     ToolApprovalItem,
 )
 
+from agent.core.auth.auth_approval import approval_policy_for_item
 from agent.core.models import (
     AgentChanged,
+    AgentContext,
     ApprovalRequest,
     ReasoningChunk,
     RunEvent,
@@ -42,10 +45,34 @@ def _arguments(raw_arguments: Any) -> dict[str, Any]:
     return {} if raw_arguments is None else {"value": raw_arguments}
 
 
+def _resolve_tool_name(
+    item: Any,
+    raw_item: Any,
+    *,
+    tool_calls: Mapping[str, str] | None = None,
+) -> str:
+    name = _value(raw_item, "name", None)
+    if isinstance(name, str) and name:
+        return name
+
+    call_id = str(_value(raw_item, "call_id", _value(raw_item, "id", "")))
+    if tool_calls and call_id in tool_calls:
+        return tool_calls[call_id]
+
+    tool_origin = getattr(item, "tool_origin", None)
+    if tool_origin is not None:
+        origin_name = getattr(tool_origin, "agent_tool_name", None)
+        if isinstance(origin_name, str) and origin_name:
+            return origin_name
+
+    return "unknown_tool"
+
+
 def map_stream_event(
     event: StreamEvent,
     *,
     previous_agent_name: str | None = None,
+    tool_calls: dict[str, str] | None = None,
 ) -> list[RunEvent]:
     """Map one SDK stream event to zero or more protocol-neutral events."""
 
@@ -77,10 +104,15 @@ def map_stream_event(
     item = event.item
     raw_item = getattr(item, "raw_item", None)
     if event.name == "tool_called":
+        call_id = str(_value(raw_item, "call_id", _value(raw_item, "id", "")))
+        tool_name = _resolve_tool_name(item, raw_item, tool_calls=tool_calls)
+        if tool_calls is not None and call_id:
+            tool_calls[call_id] = tool_name
+
         return [
             ToolStart(
-                call_id=str(_value(raw_item, "call_id", _value(raw_item, "id", ""))),
-                tool_name=str(_value(raw_item, "name", "unknown_tool")),
+                call_id=call_id,
+                tool_name=tool_name,
                 arguments=_arguments(_value(raw_item, "arguments")),
             )
         ]
@@ -88,18 +120,8 @@ def map_stream_event(
     if event.name == "tool_output":
         return [
             ToolResult(
-                call_id=str(_value(raw_item, "call_id", "")),
-                tool_name=str(
-                    _value(
-                        raw_item,
-                        "name",
-                        getattr(
-                            getattr(item, "tool_origin", None),
-                            "tool_name",
-                            "unknown_tool",
-                        ),
-                    )
-                ),
+                call_id=str(_value(raw_item, "call_id", _value(raw_item, "id", ""))),
+                tool_name=_resolve_tool_name(item, raw_item, tool_calls=tool_calls),
                 output=getattr(item, "output", _value(raw_item, "output")),
             )
         ]
@@ -120,13 +142,41 @@ def approval_id(item: ToolApprovalItem, index: int) -> str:
     return item.call_id or f"approval-{index}"
 
 
-def map_approvals(items: list[ToolApprovalItem]) -> tuple[ApprovalRequest, ...]:
-    return tuple(
-        ApprovalRequest(
-            interruption_id=approval_id(item, index),
-            tool_name=item.name or "unknown_tool",
-            arguments=_arguments(item.arguments),
-            agent_name=item.agent.name,
+def map_approvals(
+    items: list[ToolApprovalItem],
+    *,
+    agent_context: AgentContext | None = None,
+    run_context: RunContextWrapper[AgentContext] | None = None,
+) -> tuple[ApprovalRequest, ...]:
+    approvals: list[ApprovalRequest] = []
+
+    for index, item in enumerate(items):
+        tool_name = item.name or "unknown_tool"
+        call_id = approval_id(item, index)
+        policy = approval_policy_for_item(item)
+        service = policy.vault_service if policy.requires_auth else None
+        authenticated = False
+        challenge = None
+        if policy.requires_auth and agent_context is not None and service is not None:
+            authenticated = (
+                agent_context.token_vault.peek(agent_context.identity, service)
+                is not None
+            )
+            challenge = agent_context.token_vault.challenge(service)
+
+        approvals.append(
+            ApprovalRequest(
+                interruption_id=call_id,
+                tool_name=tool_name,
+                arguments=_arguments(item.arguments),
+                agent_name=item.agent.name,
+                requires_auth=policy.requires_auth,
+                requires_approval=policy.requires_approval,
+                authenticated=authenticated,
+                service=challenge.service if challenge is not None else None,
+                authorization_url=(
+                    challenge.authorization_url if challenge is not None else None
+                ),
+            )
         )
-        for index, item in enumerate(items)
-    )
+    return tuple(approvals)

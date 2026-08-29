@@ -14,7 +14,6 @@ from agent_common import (
     AgentResumeRequest,
     AgentRunRequest,
     ApprovalDecision,
-    AuthRequiredInfo,
     IdentityHeaders,
     InterruptedResponse,
     StreamEvent,
@@ -29,25 +28,11 @@ def _render(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, indent=2)
 
 
-def _prompt_auth(challenge: AuthRequiredInfo) -> None:
-    print(f"\nAuthentication required for {challenge.tool_name} ({challenge.service}).")
-    print(f"Open: {challenge.authorization_url}")
+def _prompt_auth(*, tool_name: str, service: str, authorization_url: str) -> None:
+    print(f"\nAuthentication required for {tool_name} ({service}).")
+    print(f"Open: {authorization_url}")
     print("Continue after you have authorized externally.")
-    input("Press Enter when ready to store a demo token and retry...")
-
-
-def _dedupe_auth_challenges(
-    challenges: list[AuthRequiredInfo],
-) -> list[AuthRequiredInfo]:
-    merged: list[AuthRequiredInfo] = []
-    seen: set[tuple[str, str]] = set()
-    for challenge in challenges:
-        key = (challenge.call_id, challenge.service)
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(challenge)
-    return merged
+    input("Press Enter when ready to store a demo token and resume...")
 
 
 class AgentClient:
@@ -72,28 +57,59 @@ class AgentClient:
         )
         response.raise_for_status()
 
-    def _handle_auth_required(self, challenges: list[AuthRequiredInfo]) -> None:
-        for challenge in _dedupe_auth_challenges(challenges):
-            _prompt_auth(challenge)
-            self._store_demo_token(challenge.service)
-
     def _decisions(
         self, interruptions: list[dict[str, Any]]
     ) -> tuple[ApprovalDecision, ...]:
         decisions: list[ApprovalDecision] = []
         for interruption in interruptions:
+            interruption_id = interruption["interruption_id"]
             tool = interruption.get("tool_name", "unknown_tool")
-            agent = interruption.get("agent_name") or "unknown agent"
-            arguments = _render(interruption.get("arguments", {}))
-            answer = input(
-                f"\nApprove {tool} from {agent} with arguments {arguments}? [y/N] "
-            )
+            requires_auth = interruption.get("requires_auth", False)
+            requires_approval = interruption.get("requires_approval", True)
+            authenticated = interruption.get("authenticated", False)
+            service = interruption.get("service")
+            authorization_url = interruption.get("authorization_url")
+
+            just_authenticated = False
+            if requires_auth and not authenticated:
+                if not service or not authorization_url:
+                    raise ValueError(
+                        f"Auth metadata missing for {tool} interruption"
+                    )
+                _prompt_auth(
+                    tool_name=tool,
+                    service=service,
+                    authorization_url=authorization_url,
+                )
+                self._store_demo_token(service)
+                just_authenticated = True
+
+            if requires_approval:
+                agent = interruption.get("agent_name") or "unknown agent"
+                arguments = _render(interruption.get("arguments", {}))
+                if requires_auth and authenticated and not just_authenticated:
+                    prompt = (
+                        f"\nAlready authenticated. Approve {tool} from {agent} "
+                        f"with arguments {arguments}? [y/N] "
+                    )
+                else:
+                    prompt = (
+                        f"\nApprove {tool} from {agent} with arguments "
+                        f"{arguments}? [y/N] "
+                    )
+                answer = input(prompt)
+                decision = (
+                    "approve"
+                    if answer.strip().lower() in {"y", "yes"}
+                    else "reject"
+                )
+            else:
+                decision = "approve"
+
             decisions.append(
                 ApprovalDecision(
-                    interruption_id=interruption["interruption_id"],
-                    decision="approve"
-                    if answer.strip().lower() in {"y", "yes"}
-                    else "reject",
+                    interruption_id=interruption_id,
+                    decision=decision,
                 )
             )
         return tuple(decisions)
@@ -127,10 +143,6 @@ class AgentClient:
             if response.status == "error":
                 print(f"[error: {response.code}] {response.message}")
                 return
-            if response.auth_required:
-                self._handle_auth_required(list(response.auth_required))
-                prompt = "Please retry the tool that required authentication."
-                continue
             print(_render(response.output))
             print(
                 f"[usage: {response.usage.total_tokens} tokens, "
@@ -194,7 +206,6 @@ class AgentClient:
         ).model_dump(mode="json")
         while True:
             interrupted: dict[str, Any] | None = None
-            auth_required: list[AuthRequiredInfo] = []
             for event in self._sse(path, body):
                 self._display_event(event)
                 if event.event_type == "turn_interrupt":
@@ -205,23 +216,12 @@ class AgentClient:
                         f"\n[usage: {usage.get('total_tokens', 0)} tokens, "
                         f"{usage.get('requests', 0)} requests]"
                     )
-                    for item in event.data.get("auth_required", []):
-                        auth_required.append(AuthRequiredInfo.model_validate(item))
             if interrupted is not None:
                 body = AgentResumeRequest(
                     resume_token=interrupted["resume_token"],
                     decisions=self._decisions(interrupted["interruptions"]),
                 ).model_dump(mode="json")
                 path = "/v1/agent/runs/stream/resume"
-                continue
-            if auth_required:
-                self._handle_auth_required(auth_required)
-                prompt = "Please retry the tool that required authentication."
-                path = "/v1/agent/runs/stream"
-                body = AgentRunRequest(
-                    input=prompt,
-                    session_id=session_id,
-                ).model_dump(mode="json")
                 continue
             return
 

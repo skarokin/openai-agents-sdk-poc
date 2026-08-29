@@ -66,6 +66,11 @@ class ApprovalRequest(ContractModel):
     tool_name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
     agent_name: str | None = None
+    requires_auth: bool = False
+    requires_approval: bool = True
+    authenticated: bool = False
+    service: str | None = None
+    authorization_url: str | None = None
 
 
 class AuthRequiredInfo(ContractModel):

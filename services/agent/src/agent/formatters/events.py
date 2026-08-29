@@ -9,11 +9,10 @@ from uuid import UUID
 from agents import Agent, AgentUpdatedStreamEvent, Runner
 
 from agent.core.agent_factory import AgentFactory
-from agent.core.auth import TokenVault, auth_challenges_from_run
+from agent.core.auth import TokenVault
 from agent.core.event_mapping import map_approvals, map_stream_event, map_usage
 from agent.core.models import (
     AgentContext,
-    AuthRequired,
     EventEnvelope,
     EventSink,
     EventSource,
@@ -40,13 +39,10 @@ class QueueEventSink(EventSink):
         self._queue: asyncio.Queue[EventEnvelope | object] = asyncio.Queue()
         self._sequence = 0
         self._lock = asyncio.Lock()
-        self.auth_required: list[AuthRequired] = []
 
     async def emit(self, event: RunEvent, *, source: EventSource) -> None:
         async with self._lock:
             self._sequence += 1
-            if isinstance(event, AuthRequired):
-                self.auth_required.append(event)
             envelope = EventEnvelope(
                 sequence=self._sequence,
                 source=source,
@@ -101,6 +97,7 @@ class EventsFormatter:
                     ),
                 )
 
+                tool_calls: dict[str, str] = {}
                 async for sdk_event in streamed.stream_events():
                     source = EventSource(
                         agent_name=current_agent_name,
@@ -111,6 +108,7 @@ class EventsFormatter:
                     for event in map_stream_event(
                         sdk_event,
                         previous_agent_name=current_agent_name,
+                        tool_calls=tool_calls,
                     ):
                         await sink.emit(event, source=source)
 
@@ -131,8 +129,12 @@ class EventsFormatter:
                         owner_subject_id=context.identity.subject_id,
                     )
 
-                    terminal: RunEvent = TurnInterrupt(
-                        interruptions=map_approvals(streamed.interruptions),
+                    terminal = TurnInterrupt(
+                        interruptions=map_approvals(
+                            streamed.interruptions,
+                            agent_context=context,
+                            run_context=streamed.context_wrapper,
+                        ),
                         run_state=state,
                         resume_token=token,
                     )
@@ -140,10 +142,6 @@ class EventsFormatter:
                     terminal = TurnComplete(
                         output=streamed.final_output,
                         usage=map_usage(streamed.context_wrapper.usage),
-                        auth_required=auth_challenges_from_run(
-                            streamed,
-                            emitted=tuple(sink.auth_required),
-                        ),
                     )
 
                 await sink.emit(terminal, source=terminal_source)
@@ -249,14 +247,18 @@ class EventsFormatter:
                 session_id=session_id,
                 token_vault=self._token_vault,
             )
+
             with bind_observability_context(identity, request_id):
                 agent = await self._factory.create(context)
+
             state, _ = await self._sessions.load_run_state(
                 token,
                 agent=agent,
                 context=context,
             )
-            self._sessions.apply_decisions(state, decisions)
+            if state.get_interruptions():
+                self._sessions.apply_decisions(state, decisions)
+
             completed = False
             async for event in self._stream_prepared(
                 Query(input=state),
@@ -266,6 +268,8 @@ class EventsFormatter:
             ):
                 if isinstance(event.event, TurnComplete | TurnInterrupt):
                     completed = True
+
                 yield event, session_id
+
             if completed:
                 await self._sessions.delete_run_state(token)
