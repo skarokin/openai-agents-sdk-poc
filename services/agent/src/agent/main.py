@@ -11,7 +11,7 @@ from agent.common.http_dependencies import trusted_identity
 from agent.config import load_service_config
 from agent.core import SessionManager
 from agent.core.agent_factory import AgentFactory
-from agent.core.auth import TokenVault
+from agent.controls.guardrails import TokenVault
 from agent.core.models import IdentityContext
 from agent.core.observability import (
     setup_observability,
@@ -67,6 +67,7 @@ def create_app() -> FastAPI:
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         return VaultTokenResponse(service=body.service)
 
     return app

@@ -4,9 +4,9 @@ import time
 
 from agents import RunConfig
 
-from agent.core.auth import TokenVault
+from agent.controls.guardrails import TokenVault
+from agent.controls.hooks import SOFT_DEADLINE_SECONDS
 from agent.core.models import AgentContext, EventSink, IdentityContext
-from agent.hooks import SOFT_DEADLINE_SECONDS
 
 
 def create_agent_context(

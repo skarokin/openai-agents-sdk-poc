@@ -8,7 +8,7 @@ from agents.testing import ScriptedModel, assistant_message, function_call
 from conftest import make_context
 
 from agent.core.agent_factory import AgentFactory
-from agent.core.auth import AuthTokenMissingError, TokenVault, get_access_token
+from agent.controls.guardrails import AuthTokenMissingError, TokenVault, get_access_token
 from agent.core.models import TurnComplete, TurnInterrupt
 from agent.core.session_manager import SessionManager
 from agent.formatters.complete import CompleteFormatter

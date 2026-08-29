@@ -8,12 +8,8 @@ from collections.abc import Callable
 from agents import RunContextWrapper
 from agents.decorators import tool
 
-from agent.core.auth import (
-    auth_guardrail,
-    auth_required,
-    get_access_token,
-    hitl_auth_required,
-)
+from agent.controls.guardrails import auth_guardrail, get_access_token
+from agent.controls.interrupts import auth_required, hitl_auth_required
 from agent.core.models import AgentContext
 
 logger = logging.getLogger(__name__)

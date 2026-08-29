@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
 SUBJECT_HEADER = "X-Subject-ID"
 ACTOR_HEADER = "X-Actor-ID"
 ROLES_HEADER = "X-Roles"

@@ -15,7 +15,7 @@ from agent.core.models import (
     EventSource,
 )
 
-from .token_vault import AuthChallenge
+from .vault import AuthChallenge
 
 AUTH_REJECT_MESSAGE = (
     "The tool did not run because the caller is not authenticated. "

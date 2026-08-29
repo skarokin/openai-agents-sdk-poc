@@ -13,7 +13,7 @@ from agents import (
     ToolApprovalItem,
 )
 
-from agent.core.auth.auth_approval import approval_policy_for_item
+from agent.controls.interrupts.approval import approval_policy_for_item
 from agent.core.models import (
     AgentChanged,
     AgentContext,

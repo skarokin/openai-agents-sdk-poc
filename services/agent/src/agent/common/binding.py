@@ -8,7 +8,7 @@ from agents import Agent, AgentToolStreamEvent, FunctionTool, function_tool
 
 from agent.core.event_mapping import map_stream_event
 from agent.core.models import AgentContext, EventSource, SubagentSpec
-from agent.hooks import GLOBAL_DEADLINE_HOOK
+from agent.controls.hooks import GLOBAL_DEADLINE_HOOK
 
 
 def nested_stream_handler(context: AgentContext, fallback_invocation_id: str):

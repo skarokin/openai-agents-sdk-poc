@@ -6,7 +6,7 @@ from uuid import UUID
 from agents import Agent, Runner
 
 from agent.core.agent_factory import AgentFactory
-from agent.core.auth import TokenVault
+from agent.controls.guardrails import TokenVault
 from agent.core.event_mapping import map_approvals, map_usage
 from agent.core.models import (
     AgentContext,
@@ -21,7 +21,7 @@ from agent.core.models import (
 from agent.core.observability import bind_observability_context
 from agent.core.runtime import create_agent_context, create_run_config
 from agent.core.session_manager import SessionManager
-from agent.hooks import GLOBAL_DEADLINE_HOOK
+from agent.controls.hooks import GLOBAL_DEADLINE_HOOK
 
 logger = logging.getLogger(__name__)
 

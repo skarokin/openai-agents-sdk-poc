@@ -1,4 +1,4 @@
-"""Global agent hooks."""
+"""Run hooks."""
 
 from .deadline import (
     GLOBAL_DEADLINE_HOOK,
