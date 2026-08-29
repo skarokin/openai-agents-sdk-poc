@@ -3,6 +3,7 @@
 import tempfile
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -40,3 +41,22 @@ async def test_sessions_are_isolated_by_owner():
         assert await other_session.get_items() == []
         stored = await owner_session.get_items()
         assert stored[0]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_save_run_state_recreates_run_state_dir():
+    with tempfile.TemporaryDirectory() as directory:
+        manager = SessionManager(Path(directory))
+        run_state_dir = Path(directory) / "run_states"
+        run_state_dir.rmdir()
+
+        state = MagicMock()
+        state.to_json.return_value = "{}"
+
+        token = await manager.save_run_state(
+            state,
+            session_id="session-1",
+            owner_subject_id="owner",
+        )
+        assert run_state_dir.is_dir()
+        assert (run_state_dir / f"{token}.json").is_file()

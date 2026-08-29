@@ -170,6 +170,7 @@ class SessionManager:
                 strict_context=True,
             ),
         }
+        self._run_state_dir.mkdir(parents=True, exist_ok=True)
         path = self._run_state_dir / f"{token}.json"
         temporary = path.with_suffix(f".{uuid4().hex}.tmp")
         temporary.write_text(

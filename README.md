@@ -7,6 +7,8 @@ Built with the following difficult items treated as first-class:
 2. Outbound authentication - tools can be authed OBO a user. Built-in approval interrupts & guardrails allow the agent to pause, request user consent, store user token, and resume the tool call with their credential.
 3. One agent over many protocols - as your agent grows in adoption, so does the expected API surface - you may need to support CLI callers, MCP callers, A2A callers, Slack webhooks, etc. Built-in agent factory & formatter work supports this easily.
 
+Authentication assumes a trusted upstream source provides identity!
+
 ## Layout
 
 ```
@@ -29,15 +31,15 @@ Inside `services/agent/src/agent/`:
 
 ## Run
 
-```powershell
+```bash
 uv sync --all-packages
-$env:OPENAI_API_KEY = "..."
+export OPENAI_API_KEY=...
 uv run agent
 ```
 
 Another terminal:
 
-```powershell
+```bash
 uv run agent-cli --stream
 ```
 
