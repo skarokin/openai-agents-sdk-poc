@@ -7,6 +7,8 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+from pydantic import TypeAdapter
+
 from agent_common import (
     AgentResponse,
     AgentResumeRequest,
@@ -18,7 +20,6 @@ from agent_common import (
     StreamEvent,
     VaultTokenRequest,
 )
-from pydantic import TypeAdapter
 
 _RESPONSE_ADAPTER = TypeAdapter(AgentResponse)
 _DEFAULT_ROLES = "calculator,approval_user,subagent_user,mcp_user,auth_user"
@@ -62,7 +63,9 @@ class AgentClient:
             _prompt_auth(challenge)
             self._store_demo_token(challenge.service)
 
-    def _decisions(self, interruptions: list[dict[str, Any]]) -> tuple[ApprovalDecision, ...]:
+    def _decisions(
+        self, interruptions: list[dict[str, Any]]
+    ) -> tuple[ApprovalDecision, ...]:
         decisions: list[ApprovalDecision] = []
         for interruption in interruptions:
             tool = interruption.get("tool_name", "unknown_tool")

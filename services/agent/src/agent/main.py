@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import uvicorn
-from agent_common import HealthResponse, VaultTokenRequest, VaultTokenResponse
 from fastapi import Depends, FastAPI, HTTPException, Request
 
 from agent.common.http_dependencies import trusted_identity
@@ -20,6 +19,7 @@ from agent.core.observability import (
 from agent.core.token_vault import TokenVault
 from agent.formatters import CompleteFormatter, EventsFormatter
 from agent.protocols import rest_router, sse_router
+from agent_common import HealthResponse, VaultTokenRequest, VaultTokenResponse
 
 
 @asynccontextmanager

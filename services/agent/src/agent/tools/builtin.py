@@ -84,7 +84,10 @@ async def authentication_demo(context: RunContextWrapper[AgentContext]) -> str:
 
     logger.info(
         "authentication demo tool invoked",
-        extra={"subject_id": context.context.identity.subject_id, "access_token": access_token},
+        extra={
+            "subject_id": context.context.identity.subject_id,
+            "access_token": access_token,
+        },
     )
     return "at this point, user has authenticated successfully!"
 
@@ -100,7 +103,10 @@ async def auth_approval_demo(context: RunContextWrapper[AgentContext]) -> str:
 
     logger.info(
         "auth approval demo tool invoked",
-        extra={"subject_id": context.context.identity.subject_id, "access_token": access_token},
+        extra={
+            "subject_id": context.context.identity.subject_id,
+            "access_token": access_token,
+        },
     )
     return (
         "at this point, user has authenticated successfully "

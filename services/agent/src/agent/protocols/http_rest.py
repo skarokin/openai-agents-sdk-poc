@@ -3,7 +3,6 @@
 from typing import Annotated
 from uuid import uuid4
 
-from agent_common import AgentResponse, AgentResumeRequest, AgentRunRequest
 from fastapi import APIRouter, Depends, HTTPException
 
 from agent.common.http_dependencies import complete_formatter, trusted_identity
@@ -11,6 +10,7 @@ from agent.common.http_mapping import complete_response
 from agent.core.models import IdentityContext
 from agent.core.observability import bind_observability_context
 from agent.formatters import CompleteFormatter
+from agent_common import AgentResponse, AgentResumeRequest, AgentRunRequest
 
 router = APIRouter(prefix="/v1/agent", tags=["agent-rest"])
 

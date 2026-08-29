@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from agents.tool_guardrails import ToolInputGuardrailResult
+
 from agent.core.agent_factory import AgentFactory
 from agent.core.auth_guardrail import (
     MODEL_AUTH_MESSAGE,
@@ -18,7 +20,6 @@ from agent.core.models import AgentContext, IdentityContext, TurnComplete, TurnI
 from agent.core.session_manager import SessionManager
 from agent.core.token_vault import TokenVault
 from agent.formatters.complete import CompleteFormatter
-from agents.tool_guardrails import ToolInputGuardrailResult
 
 try:
     from test_nested_hitl import SequenceModel, _message, _tool_call
@@ -54,7 +55,9 @@ class AuthGuardrailUnitTest(unittest.IsolatedAsyncioTestCase):
     async def test_get_access_token_returns_token_when_present(self):
         with tempfile.TemporaryDirectory() as directory:
             vault = TokenVault(Path(directory))
-            identity = IdentityContext(subject_id="user", roles=frozenset({"auth_user"}))
+            identity = IdentityContext(
+                subject_id="user", roles=frozenset({"auth_user"})
+            )
             await vault.put(identity, "authentication_demo", "oauth-token")
             context = AgentContext(
                 identity=identity,
@@ -98,7 +101,9 @@ class AuthGuardrailUnitTest(unittest.IsolatedAsyncioTestCase):
             [ToolInputGuardrailResult(guardrail=guardrail, output=output)]
         )
         self.assertEqual(len(challenges), 1)
-        self.assertEqual(challenges[0].authorization_url, "agent://vault/authentication_demo")
+        self.assertEqual(
+            challenges[0].authorization_url, "agent://vault/authentication_demo"
+        )
 
 
 class AuthGuardrailFormatterTest(unittest.IsolatedAsyncioTestCase):

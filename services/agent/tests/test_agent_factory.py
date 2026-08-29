@@ -3,10 +3,11 @@
 import time
 import unittest
 
+from agents import RunContextWrapper
+
 from agent.core.agent_factory import AgentFactory
 from agent.core.config import load_service_config
 from agent.core.models import AgentContext, IdentityContext
-from agents import RunContextWrapper
 
 
 class CollectingSink:

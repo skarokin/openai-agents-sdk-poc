@@ -3,6 +3,8 @@
 import unittest
 from collections.abc import AsyncIterator
 
+from fastapi.testclient import TestClient
+
 from agent.core.models import (
     CompleteResult,
     EventEnvelope,
@@ -13,7 +15,6 @@ from agent.core.models import (
     UsageUpdate,
 )
 from agent.main import app
-from fastapi.testclient import TestClient
 
 
 class FakeCompleteFormatter:

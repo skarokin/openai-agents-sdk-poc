@@ -2,12 +2,12 @@
 
 from typing import Annotated
 
-from agent_common import ACTOR_HEADER, ROLES_HEADER, SUBJECT_HEADER
 from fastapi import Header, HTTPException, Request
 
 from agent.core.models import IdentityContext
 from agent.core.session_manager import SessionManager
 from agent.formatters import CompleteFormatter, EventsFormatter
+from agent_common import ACTOR_HEADER, ROLES_HEADER, SUBJECT_HEADER
 
 
 def trusted_identity(

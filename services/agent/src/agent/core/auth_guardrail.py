@@ -14,8 +14,7 @@ from .models import AgentContext, AuthRequired, EventSink, EventSource, RunEvent
 from .token_vault import AuthChallenge
 
 MODEL_AUTH_MESSAGE = (
-    "The user has been asked to authenticate into the service. "
-    "The tool did not run."
+    "The user has been asked to authenticate into the service. The tool did not run."
 )
 
 

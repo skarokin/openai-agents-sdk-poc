@@ -8,18 +8,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from agent.core.agent_factory import AgentFactory
-from agent.core.config import load_service_config
-from agent.core.models import (
-    AgentContext,
-    EventSource,
-    IdentityContext,
-    RunEvent,
-    TextChunk,
-)
-from agent.core.runtime import create_run_config
-from agent.core.session_manager import SessionManager
-from agent.hooks import GLOBAL_DEADLINE_HOOK, SOFT_DEADLINE_MESSAGE
 from agents import Runner
 from agents.agent_output import AgentOutputSchemaBase
 from agents.handoffs import Handoff
@@ -52,6 +40,19 @@ from openai.types.responses.response_usage import (
     InputTokensDetails,
     OutputTokensDetails,
 )
+
+from agent.core.agent_factory import AgentFactory
+from agent.core.config import load_service_config
+from agent.core.models import (
+    AgentContext,
+    EventSource,
+    IdentityContext,
+    RunEvent,
+    TextChunk,
+)
+from agent.core.runtime import create_run_config
+from agent.core.session_manager import SessionManager
+from agent.hooks import GLOBAL_DEADLINE_HOOK, SOFT_DEADLINE_MESSAGE
 
 
 def _tool_call(name: str, call_id: str, arguments: dict[str, Any]):
@@ -276,8 +277,7 @@ class NestedHitlTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(first_input, list)
         self.assertTrue(
             any(
-                isinstance(item, dict)
-                and item.get("content") == SOFT_DEADLINE_MESSAGE
+                isinstance(item, dict) and item.get("content") == SOFT_DEADLINE_MESSAGE
                 for item in first_input
             )
         )

@@ -3,21 +3,6 @@
 from dataclasses import asdict
 from typing import Any
 
-from agent_common import (
-    ApprovalRequest as HttpApprovalRequest,
-)
-from agent_common import (
-    AuthRequiredInfo,
-    CompletedResponse,
-    ErrorResponse,
-    InterruptedResponse,
-    StreamEvent,
-    Usage,
-)
-from agent_common import (
-    EventSource as HttpEventSource,
-)
-
 from agent.core.models import (
     AgentChanged,
     AuthRequired,
@@ -32,6 +17,20 @@ from agent.core.models import (
     TurnError,
     TurnInterrupt,
     UsageUpdate,
+)
+from agent_common import (
+    ApprovalRequest as HttpApprovalRequest,
+)
+from agent_common import (
+    AuthRequiredInfo,
+    CompletedResponse,
+    ErrorResponse,
+    InterruptedResponse,
+    StreamEvent,
+    Usage,
+)
+from agent_common import (
+    EventSource as HttpEventSource,
 )
 
 
