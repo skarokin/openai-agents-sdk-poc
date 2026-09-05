@@ -170,7 +170,6 @@ def _subagent_tool(
         return final_output_text(result.message) or str(result)
 
     decorated = tool(name=name, description=spec.description, context=True)(run)
-    decorated._nested_agent = nested
     return decorated
 
 

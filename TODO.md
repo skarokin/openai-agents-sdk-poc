@@ -2,18 +2,29 @@
 
 ## better testing (not sure where/how each get classified as tho)
 
-1. RBAC works (session isolation, agent factory)
-2. token vault works (put get peek challenge)
-3. agent-from-config works
-4. HITL properly bubbles up from subagents, repsonse bubbles down to subagents
-5. auth interrupt properly bubble up from subagents, response bubble down to subagents
-6. subagents and root agent share the same session but not the same namespace
-7. subagents have same invocation state as root (exlcuding root agent key)
-8. HITL works in general (no means no, yes means yes)
-9. auth interrupt blocks forever until valid token
-10. strands -> internal -> http event mapping works as expected
-11. individual protocol adapter tests (things like "test happy path" and "if no identity then 401" or "properly receive event stream")
-12. individual tool-level units (later - just scaffold/template it)
-13. tools/subagents/mcp-from-config works
-14. deadline hook works
-15. 
+- agent factory
+    - RBAC enforcement (tools, mcp, and subagents are built according to role)
+    - new agent per request (no risk of leaking/using unprivileged agent config)
+- token vault
+    - just basic testing that public functions work as expected
+- session mngr
+    - technically not needed since Strands' session manager works and is tested out of the box
+    - BUT we have 1 custom scaffold - make sure session IDs are created as expected 
+- config files
+    - agent-from-config works
+    - tools/mcp-subagents-from-config works
+- auth
+    - properly blocks tool execution until token is valid
+    - properly bubbles up auth requests from tool -> agent and tool -> subagent -> agent
+    - properly bubbles down auth responses from caller -> agent -> tool and caller -> agent -> subagent -> tool
+- HITL
+    - properly blocks tool execution until Y
+    - properly bubbles up HITL requests from tool -> agent and tool -> subagent -> agent
+    - properly bubbles down HITL responses from caller -> agent -> tool and caller -> agent -> subagent -> tool
+- event mapping
+    - idk basic testing that we properly map Strands -> internal and internal -> API contract
+- adapters
+    - idk, basic unit testing that HTTP endpoints work ?
+- deadline hook
+    - properly stops agent execution (INCLUDING subagents) on deadline reached
+- general orchestration tests (requires mock Strands model)

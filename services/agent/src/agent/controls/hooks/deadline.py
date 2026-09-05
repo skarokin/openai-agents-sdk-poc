@@ -1,11 +1,14 @@
 """Soft-deadline enforcement via Strands hooks."""
 
 import logging
+import time
 from typing import Any
 
 from strands.hooks import BeforeModelCallEvent, HookProvider, HookRegistry
 
+
 logger = logging.getLogger(__name__)
+
 
 SOFT_DEADLINE_SECONDS = 300.0
 SOFT_DEADLINE_MESSAGE = (
@@ -24,8 +27,6 @@ class SoftDeadlineHook(HookProvider):
         deadline = event.agent.state.get("deadline_epoch_seconds")
         if deadline is None:
             return
-
-        import time
 
         if time.time() < float(deadline):
             return
