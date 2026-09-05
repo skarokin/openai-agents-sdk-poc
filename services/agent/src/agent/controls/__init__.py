@@ -1,7 +1,7 @@
 """
-Anything attached to agent runs that control execution live here. As of this writing, these are:
+Execution policy for agent runs, grouped by domain:
 
-- hooks
-- guardrails
-- interrupts
+- deadlines
+- hitl
+- auth
 """

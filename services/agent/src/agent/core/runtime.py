@@ -5,7 +5,7 @@ from typing import Any
 
 from strands.types.agent import Limits
 
-from agent.controls.hooks import SOFT_DEADLINE_SECONDS
+from agent.controls.deadlines import HARD_DEADLINE_SECONDS, SOFT_DEADLINE_SECONDS
 from agent.core.models import AgentContext, IdentityContext
 from agent.core.token_vault import TokenVault
 
@@ -17,11 +17,13 @@ def create_agent_context(
     session_id: str,
     token_vault: TokenVault,
 ) -> AgentContext:
+    now = time.time()
     return AgentContext(
         identity=identity,
         request_id=request_id,
         session_id=session_id,
-        deadline_epoch_seconds=time.time() + SOFT_DEADLINE_SECONDS,
+        soft_deadline_epoch_seconds=now + SOFT_DEADLINE_SECONDS,
+        hard_deadline_epoch_seconds=now + HARD_DEADLINE_SECONDS,
         token_vault=token_vault,
     )
 

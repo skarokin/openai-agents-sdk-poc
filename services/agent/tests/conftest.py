@@ -22,10 +22,12 @@ def make_context(
     roles: frozenset[str] | set[str] | None = None,
     request_id: str = "test-request",
     session_id: str = "test-session",
-    deadline_offset_seconds: float = 60,
+    soft_deadline_offset_seconds: float = 60,
+    hard_deadline_offset_seconds: float = 90,
     token_vault: TokenVault | None = None,
     **kwargs,
 ) -> AgentContext:
+    now = time.time()
     return AgentContext(
         identity=IdentityContext(
             subject_id=subject_id,
@@ -33,7 +35,8 @@ def make_context(
         ),
         request_id=request_id,
         session_id=session_id,
-        deadline_epoch_seconds=time.time() + deadline_offset_seconds,
+        soft_deadline_epoch_seconds=now + soft_deadline_offset_seconds,
+        hard_deadline_epoch_seconds=now + hard_deadline_offset_seconds,
         token_vault=token_vault or TokenVault.from_environment(),
         **kwargs,
     )

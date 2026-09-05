@@ -1,5 +1,6 @@
 """Per-run execution context."""
 
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,12 +32,18 @@ class AgentContext:
     identity: IdentityContext
     request_id: str
     session_id: str
-    deadline_epoch_seconds: float
+    soft_deadline_epoch_seconds: float
+    hard_deadline_epoch_seconds: float
     token_vault: Any = field(default_factory=_default_token_vault)
+    cancel_signal: threading.Event = field(default_factory=threading.Event)
 
     @property
-    def deadline_exceeded(self) -> bool:
-        return time.time() >= self.deadline_epoch_seconds
+    def soft_deadline_exceeded(self) -> bool:
+        return time.time() >= self.soft_deadline_epoch_seconds
+
+    @property
+    def hard_deadline_exceeded(self) -> bool:
+        return time.time() >= self.hard_deadline_epoch_seconds
 
     def to_agent_state(self) -> dict[str, Any]:
         """JSON-serializable identity/session facts stored on agent.state."""
@@ -49,7 +56,8 @@ class AgentContext:
             },
             "request_id": self.request_id,
             "session_id": self.session_id,
-            "deadline_epoch_seconds": self.deadline_epoch_seconds,
+            "soft_deadline_epoch_seconds": self.soft_deadline_epoch_seconds,
+            "hard_deadline_epoch_seconds": self.hard_deadline_epoch_seconds,
         }
 
     def to_invocation_state(self) -> dict[str, Any]:
@@ -60,5 +68,7 @@ class AgentContext:
             "identity": self.identity,
             "request_id": self.request_id,
             "session_id": self.session_id,
-            "deadline_epoch_seconds": self.deadline_epoch_seconds,
+            "soft_deadline_epoch_seconds": self.soft_deadline_epoch_seconds,
+            "hard_deadline_epoch_seconds": self.hard_deadline_epoch_seconds,
+            "cancel_signal": self.cancel_signal,
         }

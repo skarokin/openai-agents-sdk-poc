@@ -8,7 +8,7 @@ from collections.abc import Callable
 from strands import tool
 from strands.types.tools import ToolContext
 
-from agent.controls.interrupts import require_vault_token
+from agent.controls.auth import require_vault_token
 from agent.core.models import IdentityContext
 
 logger = logging.getLogger(__name__)

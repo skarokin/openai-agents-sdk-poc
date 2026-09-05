@@ -1,5 +1,6 @@
 """Config-driven HITL catalogs and nested interrupt coverage."""
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +9,8 @@ from strands.interrupt import Interrupt, InterruptException
 from strands.vended_interventions.hitl import HumanInTheLoop
 
 from agent.config import hitl_allowed_tools, load_service_config
-from agent.controls.interrupts import NESTED_HITL_REASON_KEY, require_vault_token
+from agent.controls.auth import require_vault_token
+from agent.controls.hitl import NESTED_HITL_REASON_KEY
 from agent.core.agent_factory import AgentFactory, _subagent_tool
 from agent.core.event_mapping import map_interrupts
 from agent.core.models import SubagentSpec
@@ -186,7 +188,8 @@ async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path,
     vault = object()
     identity = object()
     parent = SimpleNamespace(
-        _interrupt_state=SimpleNamespace(interrupts={}, activated=False)
+        _interrupt_state=SimpleNamespace(interrupts={}, activated=False),
+        cancel_signal=threading.Event(),
     )
 
     results = []

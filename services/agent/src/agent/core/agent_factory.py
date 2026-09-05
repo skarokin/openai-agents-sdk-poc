@@ -15,7 +15,8 @@ from strands.types.tools import ToolContext
 from strands.vended_interventions.hitl import HumanInTheLoop
 
 from agent.config import ServiceConfig, ToolConfig, hitl_allowed_tools
-from agent.controls.interrupts import nested_hitl_reason
+from agent.controls.deadlines import GLOBAL_DEADLINE_HOOK
+from agent.controls.hitl import nested_hitl_reason
 from agent.core.event_mapping import final_output_text, tool_use_from_message
 from agent.core.models import AgentContext, SubagentSpec
 from agent.core.runtime import create_trace_attributes
@@ -88,15 +89,21 @@ def _subagent_tool(
     """
     Build a nested agent-as-tool that shares the parent conversation session.
 
+    This is the global source-of-truth for how all subagents should behave when invoked as a tool.
+    It's possible that later down the line a subagent should behave differently from the rest,
+    but until then we want to keep the behavior consistent and always use this function.
+
     An agent-as-tool...
     1. Does not inherit the parent's invocation_state
     2. Does not natively bubble up interrupts to the parent agent
     3. (this list will grow as we add more features that need to be handled)
 
-    So, we ensure that:
-    1. Invocation_state is passed in to the nested agent via ToolContext
+    So, this function serves to ensure that:
+    1. Invocation state is passed in to the nested agent via ToolContext (includes shared soft/hard deadline epochs)
     2. Interrupts made on the subagent bubble up to the root agent
-    3. Interrupts made in response to subagents are bubbled back down to the subagent.
+    3. Interrupts made in response to subagents are bubbled back down to the subagent
+    4. Parent cancel_signal is forwarded so hard cancel will also stop the nested agent
+    5. Soft-deadline hook is attached here (same GLOBAL_DEADLINE_HOOK as root)
 
     The session manager being shared is critical for the interrupt state to be shared between root and subagents.
     """
@@ -116,16 +123,21 @@ def _subagent_tool(
             if nested_hitl
             else None
         ),
+        hooks=[GLOBAL_DEADLINE_HOOK],
         callback_handler=None,
     )
 
+    # the actual subagent execution logic
     async def run(input: str, tool_context: ToolContext) -> str:
+        # copy invocation state from the parent agent
         invocation_state = {
             key: value
             for key, value in tool_context.invocation_state.items()
             if key != "agent"
         }
 
+        # if subagent has an active interrupt, we need to bubble down the response that the user
+        # provided to the parent agent back down to the subagent
         if nested._interrupt_state.activated:
             responses = []
             tool_use_message = nested._interrupt_state.context.get("tool_use_message")
@@ -146,14 +158,27 @@ def _subagent_tool(
                         }
                     }
                 )
+
             result = await nested.invoke_async(
-                responses, invocation_state=invocation_state
+                responses,
+                invocation_state=invocation_state,
+                cancel_signal=(
+                    invocation_state.get("cancel_signal")
+                    or tool_context.cancel_signal
+                ),
             )
         else:
             result = await nested.invoke_async(
-                input, invocation_state=invocation_state
+                input,
+                invocation_state=invocation_state,
+                cancel_signal=(
+                    invocation_state.get("cancel_signal")
+                    or tool_context.cancel_signal
+                ),
             )
 
+        # if subagent raised an interrupt, we need to bubble this up to the parent agent
+        # so that it can show the user the interrupt
         if result.stop_reason == "interrupt" and result.interrupts:
             tool_use_message = nested._interrupt_state.context.get("tool_use_message")
             for interrupt in result.interrupts:
@@ -167,9 +192,13 @@ def _subagent_tool(
                 )
             raise RuntimeError("nested interrupt should have raised")
 
+        # parent agent sees agent's final message as a regular tool result
         return final_output_text(result.message) or str(result)
 
     decorated = tool(name=name, description=spec.description, context=True)(run)
+    # this just allows tests to grab the nested Agent object
+    decorated._nested_agent = nested  # type: ignore[attr-defined]
+
     return decorated
 
 
@@ -322,5 +351,6 @@ class AgentFactory:
             interventions=interventions,
             state=context.to_agent_state(),
             trace_attributes=create_trace_attributes(context),
+            hooks=[GLOBAL_DEADLINE_HOOK],
             callback_handler=None,
         )

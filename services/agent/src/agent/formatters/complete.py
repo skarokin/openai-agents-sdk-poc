@@ -4,6 +4,7 @@ import logging
 
 from strands import Agent
 
+from agent.controls.deadlines import start_hard_deadline_watchdog
 from agent.core.agent_factory import AgentFactory
 from agent.core.event_mapping import (
     decision_to_interrupt_response,
@@ -38,11 +39,16 @@ class CompleteFormatter:
         agent: Agent,
     ) -> CompleteResult:
         with bind_observability_context(context.identity, context.request_id):
+            watchdog = start_hard_deadline_watchdog(
+                context.cancel_signal,
+                context.hard_deadline_epoch_seconds,
+            )
             try:
                 result = await agent.invoke_async(
                     query.input,
                     invocation_state=context.to_invocation_state(),
                     limits=create_limits(self._factory.max_turns),
+                    cancel_signal=context.cancel_signal,
                 )
                 if result.stop_reason == "interrupt":
                     return CompleteResult(
@@ -73,6 +79,8 @@ class CompleteFormatter:
                         retryable=False,
                     )
                 )
+            finally:
+                watchdog.cancel()
 
     async def run(
         self,

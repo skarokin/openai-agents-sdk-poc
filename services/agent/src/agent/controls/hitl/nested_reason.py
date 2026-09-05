@@ -1,4 +1,9 @@
-"""Shared interrupt reason shapes raised inside the agent service"""
+"""
+Shared interrupt reason shapes for nested HITL bubbling.
+
+HITL is a first-class feature of Strands so this is just a helper for our desired behavior of
+nested HITL bubbling.
+"""
 
 from collections.abc import Mapping
 from typing import Any

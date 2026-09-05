@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 
 from strands import Agent
 
+from agent.controls.deadlines import start_hard_deadline_watchdog
 from agent.core.agent_factory import AgentFactory
 from agent.core.event_mapping import (
     decision_to_interrupt_response,
@@ -58,22 +59,30 @@ class EventsFormatter:
 
         try:
             with bind_observability_context(context.identity, context.request_id):
-                async for event in agent.stream_async(
-                    query.input,
-                    invocation_state=context.to_invocation_state(),
-                    limits=create_limits(self._factory.max_turns),
-                ):
-                    if "result" in event:
-                        result = event["result"]
-                        continue
+                watchdog = start_hard_deadline_watchdog(
+                    context.cancel_signal,
+                    context.hard_deadline_epoch_seconds,
+                )
+                try:
+                    async for event in agent.stream_async(
+                        query.input,
+                        invocation_state=context.to_invocation_state(),
+                        limits=create_limits(self._factory.max_turns),
+                        cancel_signal=context.cancel_signal,
+                    ):
+                        if "result" in event:
+                            result = event["result"]
+                            continue
 
-                    for normalized in map_stream_event(event, tool_calls=tool_calls):
-                        sequence += 1
-                        yield EventEnvelope(
-                            sequence=sequence,
-                            source=source,
-                            event=normalized,
-                        )
+                        for normalized in map_stream_event(event, tool_calls=tool_calls):
+                            sequence += 1
+                            yield EventEnvelope(
+                                sequence=sequence,
+                                source=source,
+                                event=normalized,
+                            )
+                finally:
+                    watchdog.cancel()
 
                 if result is None:
                     raise RuntimeError("Strands stream ended without a result event")

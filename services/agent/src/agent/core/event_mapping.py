@@ -6,7 +6,7 @@ from typing import Any
 
 from strands.interrupt import Interrupt
 
-from agent.controls.interrupts import is_nested_hitl_reason
+from agent.controls.hitl import is_nested_hitl_reason
 from agent.core.models import (
     AgentContext,
     ApprovalRequest,
