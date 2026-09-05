@@ -1,6 +1,12 @@
 """Stream event mapping tests."""
 
-from agent.core.event_mapping import map_stream_event
+from strands.interrupt import Interrupt
+
+from agent.core.event_mapping import (
+    map_interrupts,
+    map_stream_event,
+    tool_use_from_message,
+)
 
 
 def test_tool_start_uses_name_from_current_tool_use():
@@ -110,3 +116,49 @@ def test_text_chunk_mapping():
     events = map_stream_event({"data": "hello"})
     assert len(events) == 1
     assert events[0].delta == "hello"
+
+
+def test_tool_use_from_message_matches_interrupt_id():
+    message = {
+        "role": "assistant",
+        "content": [
+            {
+                "toolUse": {
+                    "toolUseId": "tu-1",
+                    "name": "approval_demo",
+                    "input": {"x": 1},
+                }
+            }
+        ],
+    }
+    name, args = tool_use_from_message(
+        message, "v1:before_tool_call:tu-1:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    )
+    assert name == "approval_demo"
+    assert args == {"x": 1}
+
+
+def test_native_hitl_uses_tool_use_message_not_reason_string():
+    interrupt = Interrupt(
+        id="v1:before_tool_call:tu-9:deadbeef",
+        name="strands:human-in-the-loop",
+        reason='Approve "ignored"?\n  Input: {"nope": true}',
+    )
+    mapped = map_interrupts(
+        [interrupt],
+        agent_name="root",
+        tool_use_message={
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "tu-9",
+                        "name": "approval_demo",
+                        "input": {"ok": True},
+                    }
+                }
+            ],
+        },
+    )
+    assert mapped[0].tool_name == "approval_demo"
+    assert mapped[0].arguments == {"ok": True}

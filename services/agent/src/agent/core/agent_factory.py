@@ -9,15 +9,17 @@ from typing import Any
 from strands import Agent, tool
 from strands.models import Model
 from strands.models.openai import OpenAIModel
+from strands.session.file_session_manager import FileSessionManager
 from strands.tools.mcp import MCPClient
 from strands.types.tools import ToolContext
 from strands.vended_interventions.hitl import HumanInTheLoop
 
 from agent.config import ServiceConfig, ToolConfig, hitl_allowed_tools
-from agent.core.event_mapping import final_output_text
+from agent.controls.interrupts import nested_hitl_reason
+from agent.core.event_mapping import final_output_text, tool_use_from_message
 from agent.core.models import AgentContext, SubagentSpec
 from agent.core.runtime import create_trace_attributes
-from agent.core.sessions import make_file_session_manager
+from agent.core.sessions import ROOT_AGENT_ID, make_file_session_manager
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,31 @@ def _mcp_tool_filters(settings: ToolConfig, context: AgentContext):
     return {"allowed": allowed}
 
 
+def _nested_interrupt_reason(
+    interrupt: Any,
+    *,
+    agent_name: str,
+    tool_use_message: Any = None,
+) -> Any:
+    """
+    Tag bubbled nested interrupts so UI can show the subagent, not the root.
+
+    Native HITL keeps a string reason; we only wrap it so the root can carry
+    agent_name plus tool name/args from the nested interrupt's tool_use_message.
+    """
+
+    reason = interrupt.reason
+    if isinstance(reason, dict) and reason.get("requires_auth"):
+        return {**reason, "agent_name": agent_name}
+
+    tool_name, arguments = tool_use_from_message(tool_use_message, interrupt.id)
+    return nested_hitl_reason(
+        agent_name=agent_name,
+        tool_name=tool_name,
+        arguments=arguments,
+    )
+
+
 def _subagent_tool(
     spec: SubagentSpec,
     *,
@@ -56,23 +83,34 @@ def _subagent_tool(
     tools: list[Any],
     model: str | Model,
     hitl_tools: frozenset[str] | set[str],
+    session_manager: FileSessionManager,
 ) -> Any:
     """
-    Build an agent-as-tool that injects any required dependencies from the root agent.
+    Build a nested agent-as-tool that shares the parent conversation session.
 
-    An agent-as-tool does not inherit the parent's invocation_state; but we CAN access invocation state
-    via ToolContext and *then* pass it in to the nested agent.
+    An agent-as-tool...
+    1. Does not inherit the parent's invocation_state
+    2. Does not natively bubble up interrupts to the parent agent
+    3. (this list will grow as we add more features that need to be handled)
 
-    This also handles bubbling up/down interrupts to the root agent.
+    So, we ensure that:
+    1. Invocation_state is passed in to the nested agent via ToolContext
+    2. Interrupts made on the subagent bubble up to the root agent
+    3. Interrupts made in response to subagents are bubbled back down to the subagent.
+
+    The session manager being shared is critical for the interrupt state to be shared between root and subagents.
     """
 
     nested_hitl = frozenset(hitl_tools) & frozenset(spec.tools)
+    display_name = spec.agent_name or name
     nested = Agent(
-        name=name,
+        agent_id=name,
+        name=display_name,
         description=spec.description,
         system_prompt=spec.instructions,
         model=_openai_model(model),
         tools=tools,
+        session_manager=session_manager,
         interventions=(
             [HumanInTheLoop(allowed_tools=hitl_allowed_tools(nested_hitl))]
             if nested_hitl
@@ -85,16 +123,20 @@ def _subagent_tool(
         invocation_state = {
             key: value
             for key, value in tool_context.invocation_state.items()
-            if key != "agent"   # drop the parent agent itself
+            if key != "agent"
         }
 
-        # invoke subagent - bubble down interrupt if any else regular invoke
         if nested._interrupt_state.activated:
             responses = []
+            tool_use_message = nested._interrupt_state.context.get("tool_use_message")
             for interrupt in nested._interrupt_state.interrupts.values():
                 response = tool_context.interrupt(
                     interrupt.id,
-                    reason=interrupt.reason,
+                    reason=_nested_interrupt_reason(
+                        interrupt,
+                        agent_name=display_name,
+                        tool_use_message=tool_use_message,
+                    ),
                 )
                 responses.append(
                     {
@@ -112,16 +154,24 @@ def _subagent_tool(
                 input, invocation_state=invocation_state
             )
 
-        # bubble up interrupt to the root agent
         if result.stop_reason == "interrupt" and result.interrupts:
+            tool_use_message = nested._interrupt_state.context.get("tool_use_message")
             for interrupt in result.interrupts:
-                tool_context.interrupt(interrupt.id, reason=interrupt.reason)
-
+                tool_context.interrupt(
+                    interrupt.id,
+                    reason=_nested_interrupt_reason(
+                        interrupt,
+                        agent_name=display_name,
+                        tool_use_message=tool_use_message,
+                    ),
+                )
             raise RuntimeError("nested interrupt should have raised")
 
         return final_output_text(result.message) or str(result)
 
-    return tool(name=name, description=spec.description, context=True)(run)
+    decorated = tool(name=name, description=spec.description, context=True)(run)
+    decorated._nested_agent = nested
+    return decorated
 
 
 def _openai_model(model: str | Model) -> Model:
@@ -136,11 +186,6 @@ def _openai_model(model: str | Model) -> Model:
     )
 
 
-def _agent_cache_key(context: AgentContext) -> str:
-    roles = ",".join(sorted(context.identity.roles))
-    return f"{context.identity.subject_id}:{context.session_id}:{roles}"
-
-
 class AgentFactory:
     """Returns a Strands Agent with role-gated tools, MCP, and interventions."""
 
@@ -152,8 +197,6 @@ class AgentFactory:
         self._config = config
         self._mcp_clients: dict[str, MCPClient] = {}
         self._mcp_lock = asyncio.Lock()
-        self._agents: dict[str, Agent] = {}
-        self._agent_lock = asyncio.Lock()
         self._model = _openai_model(model if model is not None else config.agent.model)
 
     @property
@@ -193,8 +236,6 @@ class AgentFactory:
         return clients
 
     async def close(self) -> None:
-        async with self._agent_lock:
-            self._agents.clear()
         async with self._mcp_lock:
             for client in self._mcp_clients.values():
                 client.stop(None, None, None)
@@ -206,26 +247,11 @@ class AgentFactory:
             return None
         return HumanInTheLoop(allowed_tools=hitl_allowed_tools(required))
 
-    def _refresh_cached_agent(self, agent: Agent, context: AgentContext) -> Agent:
-        """Apply this request's identity/session facts onto a reused Agent.
-
-        Tools and nested agents stay as-is; only ``agent.state`` keys from
-        ``context.to_agent_state()`` are updated for the new request_id /
-        deadline / identity snapshot.
-        """
-
-        for key, value in context.to_agent_state().items():
-            agent.state.set(key, value)
-        return agent
-
     async def create(self, context: AgentContext) -> Agent:
-        # Reuse the same Agent tree across run/resume so nested interrupt state
-        # is not wiped by rebuilding tools each HTTP request.
-        cache_key = _agent_cache_key(context)
-        async with self._agent_lock:
-            cached = self._agents.get(cache_key)
-            if cached is not None:
-                return self._refresh_cached_agent(cached, context)
+        session_manager = make_file_session_manager(
+            context.session_id,
+            context.identity.subject_id,
+        )
 
         function_tools: dict[str, Any] = {}
         subagent_entries: list[tuple[str, ToolConfig, SubagentSpec]] = []
@@ -260,7 +286,6 @@ class AgentFactory:
                         continue
                     leaf_tools.append(_load_symbol(tool_settings.import_path))
 
-            # as_tool() drops invocation_state; custom wrap forwards vault/identity.
             tools.append(
                 _subagent_tool(
                     spec,
@@ -268,16 +293,12 @@ class AgentFactory:
                     tools=leaf_tools,
                     model=self._model,
                     hitl_tools=self._config.hitl_tools,
+                    session_manager=session_manager,
                 )
             )
 
         mcp_clients = await self._connect_mcp(context)
         tools.extend(mcp_clients)
-
-        session_manager = make_file_session_manager(
-            context.session_id,
-            context.identity.subject_id,
-        )
 
         hitl = self._hitl_intervention()
         interventions = [hitl] if hitl is not None else None
@@ -292,7 +313,8 @@ class AgentFactory:
             },
         )
 
-        agent = Agent(
+        return Agent(
+            agent_id=ROOT_AGENT_ID,
             name=self._config.agent.name,
             system_prompt=self._config.agent.instructions,
             model=self._model,
@@ -303,9 +325,3 @@ class AgentFactory:
             trace_attributes=create_trace_attributes(context),
             callback_handler=None,
         )
-        async with self._agent_lock:
-            existing = self._agents.get(cache_key)
-            if existing is not None:
-                return self._refresh_cached_agent(existing, context)
-            self._agents[cache_key] = agent
-        return agent

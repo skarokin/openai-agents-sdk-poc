@@ -6,6 +6,10 @@ from pathlib import Path
 
 from strands.session.file_session_manager import FileSessionManager
 
+# Stable agent_id for the root agent; nested tools use their tool name as agent_id
+# so they can share this session manager without colliding on the default "default" id.
+ROOT_AGENT_ID = "root"
+
 
 def session_storage_dir() -> str:
     root = Path(os.getenv("AGENT_DATA_DIR", ".agent-data")) / "sessions"

@@ -1,12 +1,12 @@
 """Normalize Strands Agents results into service-owned event models."""
 
 import json
-import re
 from collections.abc import Mapping
 from typing import Any
 
 from strands.interrupt import Interrupt
 
+from agent.controls.interrupts import is_nested_hitl_reason
 from agent.core.models import (
     AgentContext,
     ApprovalRequest,
@@ -17,8 +17,6 @@ from agent.core.models import (
     ToolStart,
     UsageUpdate,
 )
-
-_APPROVE_PROMPT_RE = re.compile(r'^Approve "([^"]+)"')
 
 
 def _arguments(raw: Any) -> dict[str, Any]:
@@ -113,21 +111,43 @@ def map_usage(metrics: Any) -> UsageUpdate:
     )
 
 
-def _tool_name_from_hitl_reason(reason: Any) -> str | None:
-    if not isinstance(reason, str):
-        return None
-    match = _APPROVE_PROMPT_RE.match(reason.strip())
-    return match.group(1) if match else None
+def tool_use_id_from_interrupt_id(interrupt_id: str) -> str | None:
+    """Extract toolUseId from a BeforeToolCall interrupt id.
+
+    Format: ``v1:before_tool_call:{toolUseId}:{uuid}``.
+    """
+
+    parts = interrupt_id.split(":")
+    if len(parts) >= 4 and parts[0] == "v1" and parts[1] == "before_tool_call":
+        return parts[2]
+    return None
 
 
-def _arguments_from_hitl_reason(reason: Any) -> dict[str, Any]:
-    if not isinstance(reason, str):
-        return {}
-    marker = "Input: "
-    index = reason.rfind(marker)
-    if index < 0:
-        return {}
-    return _arguments(reason[index + len(marker) :].strip())
+def tool_use_from_message(
+    tool_use_message: Mapping[str, Any] | None,
+    interrupt_id: str,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve tool name/args from the interrupt-state assistant tool_use message."""
+
+    tool_use_id = tool_use_id_from_interrupt_id(interrupt_id)
+    if tool_use_message is None or not tool_use_id:
+        return "", {}
+
+    content = tool_use_message.get("content")
+    if not isinstance(content, list):
+        return "", {}
+
+    for block in content:
+        if not isinstance(block, Mapping) or "toolUse" not in block:
+            continue
+        tool_use = block["toolUse"]
+        if not isinstance(tool_use, Mapping):
+            continue
+        if str(tool_use.get("toolUseId") or "") != tool_use_id:
+            continue
+        return str(tool_use.get("name") or ""), _arguments(tool_use.get("input"))
+
+    return "", {}
 
 
 def map_interrupts(
@@ -135,6 +155,7 @@ def map_interrupts(
     *,
     agent_context: AgentContext | None = None,
     agent_name: str | None = None,
+    tool_use_message: Mapping[str, Any] | None = None,
 ) -> tuple[ApprovalRequest, ...]:
     """Map Strands Interrupt objects into protocol ApprovalRequest models."""
 
@@ -158,7 +179,7 @@ def map_interrupts(
                     interruption_id=item.id,
                     tool_name=str(reason.get("tool_name") or item.name),
                     arguments=_arguments(reason.get("arguments")),
-                    agent_name=agent_name,
+                    agent_name=str(reason.get("agent_name") or agent_name or "") or None,
                     requires_auth=True,
                     requires_approval=bool(reason.get("requires_approval", False)),
                     authenticated=authenticated,
@@ -170,12 +191,25 @@ def map_interrupts(
             )
             continue
 
-        tool_name = _tool_name_from_hitl_reason(reason) or item.name
+        if is_nested_hitl_reason(reason):
+            approvals.append(
+                ApprovalRequest(
+                    interruption_id=item.id,
+                    tool_name=str(reason.get("tool_name") or ""),
+                    arguments=_arguments(reason.get("arguments")),
+                    agent_name=str(reason.get("agent_name") or agent_name or "") or None,
+                    requires_auth=False,
+                    requires_approval=True,
+                )
+            )
+            continue
+
+        tool_name, arguments = tool_use_from_message(tool_use_message, item.id)
         approvals.append(
             ApprovalRequest(
                 interruption_id=item.id,
                 tool_name=tool_name,
-                arguments=_arguments_from_hitl_reason(reason),
+                arguments=arguments,
                 agent_name=agent_name,
                 requires_auth=False,
                 requires_approval=True,

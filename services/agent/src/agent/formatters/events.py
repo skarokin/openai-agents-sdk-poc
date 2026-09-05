@@ -33,6 +33,12 @@ class EventsFormatter:
     def __init__(self, factory: AgentFactory, token_vault: TokenVault):
         self._factory = factory
         self._token_vault = token_vault
+        # Survives interrupt/resume streams so tool_result keeps the name from tool_start.
+        self._tool_names: dict[str, dict[str, str]] = {}
+
+    def _tool_names_for(self, context) -> dict[str, str]:
+        key = f"{context.identity.subject_id}:{context.session_id}"
+        return self._tool_names.setdefault(key, {})
 
     async def _stream_prepared(
         self,
@@ -47,7 +53,7 @@ class EventsFormatter:
             kind="root",
         )
 
-        tool_calls: dict[str, str] = {}
+        tool_calls = self._tool_names_for(context)
         result = None
 
         try:
@@ -78,9 +84,14 @@ class EventsFormatter:
                             result.interrupts,
                             agent_context=context,
                             agent_name=agent.name,
+                            tool_use_message=agent._interrupt_state.context.get(
+                                "tool_use_message"
+                            ),
                         ),
                     )
                 else:
+                    key = f"{context.identity.subject_id}:{context.session_id}"
+                    self._tool_names.pop(key, None)
                     terminal = TurnComplete(
                         output=final_output_text(result.message),
                         usage=map_usage(result.metrics),

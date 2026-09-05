@@ -8,7 +8,7 @@ from strands.interrupt import Interrupt, InterruptException
 from strands.vended_interventions.hitl import HumanInTheLoop
 
 from agent.config import hitl_allowed_tools, load_service_config
-from agent.controls.interrupts import require_vault_token
+from agent.controls.interrupts import NESTED_HITL_REASON_KEY, require_vault_token
 from agent.core.agent_factory import AgentFactory, _subagent_tool
 from agent.core.event_mapping import map_interrupts
 from agent.core.models import SubagentSpec
@@ -71,19 +71,23 @@ async def test_parent_hitl_includes_mcp_and_catalog_tools(service_config):
         await factory.close()
 
 
-def test_subagent_hitl_covers_nested_leaf_tools(service_config):
+def test_subagent_hitl_covers_nested_leaf_tools(service_config, tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
     spec = SubagentSpec(
         agent_name="Nested",
         instructions="test",
         description="test",
         tools=("calculator", "approval_demo", "authentication_demo"),
     )
+    from agent.core.sessions import make_file_session_manager
+
     nested_tool = _subagent_tool(
         spec,
         name="open_subagent",
         tools=[builtin.calculator, builtin.approval_demo, builtin.authentication_demo],
         model="unused",
         hitl_tools=service_config.hitl_tools,
+        session_manager=make_file_session_manager("hitl-spec", "test-user"),
     )
     handlers = _hitl_handlers(nested_tool._nested_agent)
     assert len(handlers) == 1
@@ -96,14 +100,17 @@ def test_subagent_hitl_covers_nested_leaf_tools(service_config):
 
 
 @pytest.mark.asyncio
-async def test_cached_parent_keeps_nested_agent_across_resume(service_config):
-    """Nested agent must be the same instance so interrupt state survives resume."""
+async def test_nested_interrupt_restored_via_shared_session(
+    service_config, tmp_path, monkeypatch
+):
+    """Fresh create() restores nested interrupt state from the shared session."""
 
+    monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
     factory = AgentFactory(service_config)
     try:
         context = make_context(
             roles={"calculator", "approval_user", "subagent_user"},
-            session_id="nested-interrupt-cache",
+            session_id="nested-session-restore",
         )
         parent = await factory.create(context)
         nested_tool = next(
@@ -112,6 +119,9 @@ async def test_cached_parent_keeps_nested_agent_across_resume(service_config):
             if getattr(tool, "tool_name", None) == "open_subagent"
         )
         nested_agent = nested_tool._nested_agent
+        assert nested_agent.agent_id == "open_subagent"
+        assert nested_agent._session_manager is parent._session_manager
+
         interrupt = Interrupt(
             id="nested-hitl-1",
             name="strands:human-in-the-loop",
@@ -119,24 +129,32 @@ async def test_cached_parent_keeps_nested_agent_across_resume(service_config):
         )
         nested_agent._interrupt_state.interrupts[interrupt.id] = interrupt
         nested_agent._interrupt_state.activate()
+        nested_agent._session_manager.sync_agent(nested_agent)
 
         resumed_parent = await factory.create(context)
-        assert resumed_parent is parent
+        assert resumed_parent is not parent
         resumed_nested = next(
             tool
             for tool in resumed_parent.tool_registry.registry.values()
             if getattr(tool, "tool_name", None) == "open_subagent"
         )._nested_agent
-        assert resumed_nested is nested_agent
+        assert resumed_nested is not nested_agent
         assert resumed_nested._interrupt_state.activated
-        assert resumed_nested._interrupt_state.interrupts[interrupt.id] is interrupt
+        assert "nested-hitl-1" in resumed_nested._interrupt_state.interrupts
+        assert (
+            resumed_nested._interrupt_state.interrupts["nested-hitl-1"].reason
+            == interrupt.reason
+        )
     finally:
         await factory.close()
 
 
 @pytest.mark.asyncio
-async def test_subagent_tool_forwards_invocation_state(service_config):
+async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path, monkeypatch):
     """Custom subagent tool passes ToolContext.invocation_state into invoke_async."""
+
+    monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
+    from agent.core.sessions import make_file_session_manager
 
     captured: dict[str, object] = {}
     spec = SubagentSpec(
@@ -151,6 +169,7 @@ async def test_subagent_tool_forwards_invocation_state(service_config):
         tools=[builtin.calculator],
         model="unused",
         hitl_tools=service_config.hitl_tools,
+        session_manager=make_file_session_manager("forward-state", "test-user"),
     )
     nested = tool._nested_agent
 
@@ -246,13 +265,47 @@ def test_auth_and_hitl_are_separate_interrupt_shapes():
         },
     )
     hitl = Interrupt(
-        id="h1",
+        id="v1:before_tool_call:call-hitl:deadbeef",
         name="strands:human-in-the-loop",
         reason='Approve "auth_approval_demo"?\n  Input: {}',
     )
-    mapped = map_interrupts([hitl, auth], agent_name="root")
+    mapped = map_interrupts(
+        [hitl, auth],
+        agent_name="root",
+        tool_use_message={
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "call-hitl",
+                        "name": "auth_approval_demo",
+                        "input": {},
+                    }
+                }
+            ],
+        },
+    )
     assert mapped[0].requires_approval is True and mapped[0].requires_auth is False
+    assert mapped[0].tool_name == "auth_approval_demo"
     assert mapped[1].requires_auth is True and mapped[1].requires_approval is False
+
+
+def test_nested_hitl_interrupt_carries_subagent_name():
+    bubbled = Interrupt(
+        id="n1",
+        name="nested-id",
+        reason={
+            NESTED_HITL_REASON_KEY: True,
+            "agent_name": "Protected Subagent",
+            "tool_name": "approval_demo",
+            "arguments": {},
+        },
+    )
+    mapped = map_interrupts([bubbled], agent_name="Multi-Protocol Assistant")
+    assert mapped[0].agent_name == "Protected Subagent"
+    assert mapped[0].tool_name == "approval_demo"
+    assert mapped[0].requires_approval is True
+    assert mapped[0].requires_auth is False
 
 
 def test_mcp_hitl_tool_is_config_driven_not_hardcoded():

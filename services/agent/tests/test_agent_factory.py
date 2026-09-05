@@ -48,14 +48,14 @@ async def test_full_roles_register_catalog_tools(factory, service_config):
 
 
 @pytest.mark.asyncio
-async def test_create_reuses_agent_for_same_session(factory):
-    """Nested HITL requires the same agent-as-tool instance across resume."""
+async def test_create_builds_fresh_agent_each_call(factory):
+    """Session persistence is on disk; create() must not cache Agent instances."""
 
     context = make_context(
         roles={"calculator", "approval_user", "subagent_user"},
-        session_id="session-cache-1",
+        session_id="session-no-cache",
     )
     first = await factory.create(context)
     second = await factory.create(context)
-    assert first is second
-    assert first._interrupt_state is second._interrupt_state
+    assert first is not second
+    assert first.agent_id == second.agent_id == "root"

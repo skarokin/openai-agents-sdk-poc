@@ -51,6 +51,9 @@ class CompleteFormatter:
                                 result.interrupts,
                                 agent_context=context,
                                 agent_name=agent.name,
+                                tool_use_message=agent._interrupt_state.context.get(
+                                    "tool_use_message"
+                                ),
                             ),
                         )
                     )
