@@ -8,7 +8,8 @@ from collections.abc import Callable
 from strands import tool
 from strands.types.tools import ToolContext
 
-from agent.controls.interrupts import identity_from_tool_context, require_vault_token
+from agent.controls.interrupts import require_vault_token
+from agent.core.models import IdentityContext
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def calculator(tool_context: ToolContext, expression: str) -> str:
 
     if len(expression) > 200:
         raise ValueError("Expression is too long")
-    identity = identity_from_tool_context(tool_context)
+    identity = IdentityContext.from_tool_context(tool_context)
     logger.info("calculator invoked", extra={"subject_id": identity.subject_id})
     result = _evaluate(ast.parse(expression, mode="eval"))
     return f"{result:g}"
@@ -63,7 +64,7 @@ def calculator(tool_context: ToolContext, expression: str) -> str:
 def approval_demo(tool_context: ToolContext) -> str:
     """Demo HITL approval. Gated by HumanInTheLoop intervention before execution."""
 
-    identity = identity_from_tool_context(tool_context)
+    identity = IdentityContext.from_tool_context(tool_context)
     logger.info("approval demo tool invoked", extra={"subject_id": identity.subject_id})
     return "tool approved!"
 
@@ -77,7 +78,7 @@ async def authentication_demo(tool_context: ToolContext) -> str:
         service="authentication_demo",
         tool_name="authentication_demo",
     )
-    identity = identity_from_tool_context(tool_context)
+    identity = IdentityContext.from_tool_context(tool_context)
     logger.info(
         "authentication demo tool invoked",
         extra={"subject_id": identity.subject_id, "access_token": access_token},
@@ -94,7 +95,7 @@ async def auth_approval_demo(tool_context: ToolContext) -> str:
         service="auth_approval_demo",
         tool_name="auth_approval_demo",
     )
-    identity = identity_from_tool_context(tool_context)
+    identity = IdentityContext.from_tool_context(tool_context)
     logger.info(
         "auth approval demo tool invoked",
         extra={"subject_id": identity.subject_id, "access_token": access_token},

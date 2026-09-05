@@ -1,4 +1,4 @@
-"""Shared runtime construction for formatters."""
+"""Shared request/context construction for formatters."""
 
 import time
 from typing import Any

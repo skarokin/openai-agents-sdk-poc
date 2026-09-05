@@ -7,18 +7,6 @@ from strands.types.tools import ToolContext
 from agent.core.models import IdentityContext
 
 
-def identity_from_tool_context(tool_context: ToolContext) -> IdentityContext:
-    raw = tool_context.agent.state.get("identity") or {}
-    invocation_identity = tool_context.invocation_state.get("identity")
-    if isinstance(invocation_identity, IdentityContext):
-        return invocation_identity
-    return IdentityContext(
-        subject_id=str(raw.get("subject_id") or ""),
-        actor_id=raw.get("actor_id"),
-        roles=frozenset(raw.get("roles") or ()),
-    )
-
-
 async def require_vault_token(
     tool_context: ToolContext,
     *,
@@ -26,16 +14,17 @@ async def require_vault_token(
     tool_name: str,
     arguments: dict[str, Any] | None = None,
 ) -> str:
-    """Raise an auth interrupt until the vault has a token, then return it.
+    """
+    Raises an auth interrupt until the vault has a valid token
 
-    HITL is separate: gate approval with ``HumanInTheLoop``, not this helper.
+    RuntimeError will propagate to the caller which should handle it gracefully
     """
 
     vault = tool_context.invocation_state.get("token_vault")
     if vault is None:
         raise RuntimeError("token_vault missing from invocation_state")
 
-    identity = identity_from_tool_context(tool_context)
+    identity = IdentityContext.from_tool_context(tool_context)
     token = vault.peek(identity, service)
     if token is not None:
         return token.access_token

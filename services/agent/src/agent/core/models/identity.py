@@ -1,6 +1,10 @@
 """Caller identity carried through a run."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+
+from strands.types.tools import ToolContext
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,3 +23,18 @@ class IdentityContext:
     @property
     def is_delegated(self) -> bool:
         return self.actor_id is not None
+
+    @classmethod
+    def from_tool_context(cls, tool_context: ToolContext) -> IdentityContext:
+        """Resolve identity from invocation_state, with agent.state fallback."""
+
+        raw = tool_context.agent.state.get("identity") or {}
+        invocation_identity = tool_context.invocation_state.get("identity")
+        if isinstance(invocation_identity, IdentityContext):
+            return invocation_identity
+
+        return cls(
+            subject_id=str(raw.get("subject_id") or ""),
+            actor_id=raw.get("actor_id"),
+            roles=frozenset(raw.get("roles") or ()),
+        )
