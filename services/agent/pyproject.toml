@@ -10,12 +10,13 @@ requires-python = ">=3.12"
 dependencies = [
     "agent-common",
     "fastapi",
-    "openai-agents~=0.22.0",
+    "mcp",
     "opentelemetry-api",
     "opentelemetry-exporter-otlp-proto-http",
     "opentelemetry-instrumentation-fastapi",
     "opentelemetry-sdk",
     "pyyaml",
+    "strands-agents>=1.54.0",
     "uvicorn[standard]",
 ]
 

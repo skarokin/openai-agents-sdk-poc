@@ -7,11 +7,13 @@ approval_demo:
   import_path: agent.tools.builtin:approval_demo
   enabled: true
   allowed_roles: [approval_user]
+  hitl: true
 
 protected_subagent:
   import_path: agent.tools.subagents:protected_subagent
   enabled: true
   allowed_roles: [subagent_user]
+  hitl: true
 
 open_subagent:
   import_path: agent.tools.subagents:open_subagent
@@ -27,6 +29,7 @@ auth_approval_demo:
   import_path: agent.tools.builtin:auth_approval_demo
   enabled: true
   allowed_roles: [auth_user]
+  hitl: true
 
 notes_mcp:
   type: mcp
@@ -38,3 +41,4 @@ notes_mcp:
       allowed_roles: [mcp_user]
     delete_note:
       allowed_roles: [mcp_user]
+      hitl: true

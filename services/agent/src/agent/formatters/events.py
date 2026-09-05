@@ -1,157 +1,95 @@
-"""Yield one normalized stream across root and nested agent executions."""
+"""Yield normalized stream events from a Strands agent run."""
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import suppress
-from uuid import UUID
 
-from agents import Agent, AgentUpdatedStreamEvent, Runner
+from strands import Agent
 
 from agent.core.agent_factory import AgentFactory
-from agent.controls.guardrails import TokenVault
-from agent.core.event_mapping import map_approvals, map_stream_event, map_usage
+from agent.core.event_mapping import (
+    decision_to_interrupt_response,
+    final_output_text,
+    map_interrupts,
+    map_stream_event,
+    map_usage,
+)
 from agent.core.models import (
-    AgentContext,
     EventEnvelope,
-    EventSink,
     EventSource,
     IdentityContext,
     Query,
-    RunEvent,
     TurnComplete,
     TurnError,
     TurnInterrupt,
 )
 from agent.core.observability import bind_observability_context
-from agent.core.runtime import create_agent_context, create_run_config
-from agent.core.session_manager import SessionManager
-from agent.controls.hooks import GLOBAL_DEADLINE_HOOK
+from agent.core.runtime import create_agent_context, create_limits
+from agent.core.token_vault import TokenVault
 
 logger = logging.getLogger(__name__)
-_CLOSED = object()
-
-
-class QueueEventSink(EventSink):
-    """Merge root, nested-agent, and application events in arrival order."""
-
-    def __init__(self):
-        self._queue: asyncio.Queue[EventEnvelope | object] = asyncio.Queue()
-        self._sequence = 0
-        self._lock = asyncio.Lock()
-
-    async def emit(self, event: RunEvent, *, source: EventSource) -> None:
-        async with self._lock:
-            self._sequence += 1
-            envelope = EventEnvelope(
-                sequence=self._sequence,
-                source=source,
-                event=event,
-            )
-            await self._queue.put(envelope)
-
-    async def close(self) -> None:
-        await self._queue.put(_CLOSED)
-
-    async def receive(self) -> EventEnvelope | None:
-        item = await self._queue.get()
-        return None if item is _CLOSED else item  # type: ignore[return-value]
 
 
 class EventsFormatter:
-    def __init__(
-        self,
-        factory: AgentFactory,
-        sessions: SessionManager,
-        token_vault: TokenVault,
-    ):
+    def __init__(self, factory: AgentFactory, token_vault: TokenVault):
         self._factory = factory
-        self._sessions = sessions
         self._token_vault = token_vault
 
-    async def _produce(
+    async def _stream_prepared(
         self,
         query: Query,
-        context: AgentContext,
-        agent: Agent[AgentContext],
-        sink: QueueEventSink,
-    ) -> None:
-        current_agent_name = agent.name
-        streamed = None
+        context,
+        agent: Agent,
+    ) -> AsyncIterator[EventEnvelope]:
+        sequence = 0
+        source = EventSource(
+            agent_name=agent.name or self._factory._config.agent.name,
+            invocation_id=context.request_id,
+            kind="root",
+        )
+
+        tool_calls: dict[str, str] = {}
+        result = None
 
         try:
-            with bind_observability_context(
-                context.identity,
-                context.request_id,
-            ):
-                streamed = Runner.run_streamed(
-                    agent,
+            with bind_observability_context(context.identity, context.request_id):
+                async for event in agent.stream_async(
                     query.input,
-                    context=context,
-                    hooks=GLOBAL_DEADLINE_HOOK,
-                    run_config=create_run_config(context),
-                    max_turns=self._factory.max_turns,
-                    session=self._sessions.session(
-                        context.session_id,
-                        context.identity.subject_id,
-                    ),
-                )
+                    invocation_state=context.to_invocation_state(),
+                    limits=create_limits(self._factory.max_turns),
+                ):
+                    if "result" in event:
+                        result = event["result"]
+                        continue
 
-                tool_calls: dict[str, str] = {}
-                async for sdk_event in streamed.stream_events():
-                    source = EventSource(
-                        agent_name=current_agent_name,
-                        invocation_id=context.request_id,
-                        kind="root",
-                    )
+                    for normalized in map_stream_event(event, tool_calls=tool_calls):
+                        sequence += 1
+                        yield EventEnvelope(
+                            sequence=sequence,
+                            source=source,
+                            event=normalized,
+                        )
 
-                    for event in map_stream_event(
-                        sdk_event,
-                        previous_agent_name=current_agent_name,
-                        tool_calls=tool_calls,
-                    ):
-                        await sink.emit(event, source=source)
+                if result is None:
+                    raise RuntimeError("Strands stream ended without a result event")
 
-                    if isinstance(sdk_event, AgentUpdatedStreamEvent):
-                        current_agent_name = sdk_event.new_agent.name
-
-                terminal_source = EventSource(
-                    agent_name=current_agent_name,
-                    invocation_id=context.request_id,
-                    kind="root",
-                )
-
-                if streamed.interruptions:
-                    state = streamed.to_state()
-                    token = await self._sessions.save_run_state(
-                        state,
-                        session_id=context.session_id,
-                        owner_subject_id=context.identity.subject_id,
-                    )
-
+                if result.stop_reason == "interrupt":
                     terminal = TurnInterrupt(
-                        interruptions=map_approvals(
-                            streamed.interruptions,
+                        interruptions=map_interrupts(
+                            result.interrupts,
                             agent_context=context,
-                            run_context=streamed.context_wrapper,
+                            agent_name=agent.name,
                         ),
-                        run_state=state,
-                        resume_token=token,
                     )
                 else:
                     terminal = TurnComplete(
-                        output=streamed.final_output,
-                        usage=map_usage(streamed.context_wrapper.usage),
+                        output=final_output_text(result.message),
+                        usage=map_usage(result.metrics),
                     )
 
-                await sink.emit(terminal, source=terminal_source)
+                sequence += 1
+                yield EventEnvelope(sequence=sequence, source=source, event=terminal)
 
-        except asyncio.CancelledError:
-            if streamed is not None:
-                streamed.cancel()
-
-            raise
-        except Exception as exc:
+        except Exception:
             logger.exception(
                 "streaming agent run failed",
                 extra={
@@ -160,41 +98,16 @@ class EventsFormatter:
                     "actor_id": context.identity.actor_id or "-",
                 },
             )
-            await sink.emit(
-                TurnError(
-                    code=type(exc).__name__,
+            sequence += 1
+            yield EventEnvelope(
+                sequence=sequence,
+                source=source,
+                event=TurnError(
+                    code="AgentExecutionError",
                     message="Agent execution failed",
                     retryable=False,
                 ),
-                source=EventSource(
-                    agent_name=current_agent_name,
-                    invocation_id=context.request_id,
-                    kind="root",
-                ),
             )
-        finally:
-            await sink.close()
-
-    async def _stream_prepared(
-        self,
-        query: Query,
-        context: AgentContext,
-        agent: Agent[AgentContext],
-        sink: QueueEventSink,
-    ) -> AsyncIterator[EventEnvelope]:
-        producer = asyncio.create_task(
-            self._produce(query, context, agent, sink),
-            name=f"agent-stream-{context.request_id}",
-        )
-        try:
-            while event := await sink.receive():
-                yield event
-            await producer
-        finally:
-            if not producer.done():
-                producer.cancel()
-                with suppress(asyncio.CancelledError):
-                    await producer
 
     async def stream(
         self,
@@ -204,72 +117,46 @@ class EventsFormatter:
         request_id: str,
         session_id: str,
     ) -> AsyncIterator[EventEnvelope]:
-        """Stream an agent run"""
-
-        sink = QueueEventSink()
         context = create_agent_context(
             identity,
-            sink,
             request_id=request_id,
             session_id=session_id,
             token_vault=self._token_vault,
         )
         with bind_observability_context(identity, request_id):
             agent = await self._factory.create(context)
+
         async for event in self._stream_prepared(
             Query(input=input_text),
             context,
             agent,
-            sink,
         ):
             yield event
 
     async def resume(
         self,
-        token: UUID,
+        session_id: str,
         decisions: dict[str, str],
         identity: IdentityContext,
         *,
         request_id: str,
-    ) -> AsyncIterator[tuple[EventEnvelope, str]]:
-        """Resume an interrupted agent run"""
+    ) -> AsyncIterator[EventEnvelope]:
+        context = create_agent_context(
+            identity,
+            request_id=request_id,
+            session_id=session_id,
+            token_vault=self._token_vault,
+        )
+        responses = [
+            decision_to_interrupt_response(interrupt_id, decision)
+            for interrupt_id, decision in decisions.items()
+        ]
+        with bind_observability_context(identity, request_id):
+            agent = await self._factory.create(context)
 
-        async with self._sessions.lock_run_state(token):
-            session_id = self._sessions.run_state_session_id(
-                token,
-                identity.subject_id,
-            )
-            sink = QueueEventSink()
-            context = create_agent_context(
-                identity,
-                sink,
-                request_id=request_id,
-                session_id=session_id,
-                token_vault=self._token_vault,
-            )
-
-            with bind_observability_context(identity, request_id):
-                agent = await self._factory.create(context)
-
-            state, _ = await self._sessions.load_run_state(
-                token,
-                agent=agent,
-                context=context,
-            )
-            if state.get_interruptions():
-                self._sessions.apply_decisions(state, decisions)
-
-            completed = False
-            async for event in self._stream_prepared(
-                Query(input=state),
-                context,
-                agent,
-                sink,
-            ):
-                if isinstance(event.event, TurnComplete | TurnInterrupt):
-                    completed = True
-
-                yield event, session_id
-
-            if completed:
-                await self._sessions.delete_run_state(token)
+        async for event in self._stream_prepared(
+            Query(input=responses),
+            context,
+            agent,
+        ):
+            yield event

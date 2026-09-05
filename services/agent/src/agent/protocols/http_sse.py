@@ -1,4 +1,4 @@
-"""SSE protocol adapter for normalized root and nested agent events."""
+"""SSE protocol adapter for normalized agent events."""
 
 from collections.abc import AsyncIterator
 from typing import Annotated
@@ -7,15 +7,10 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from agent.common.http_dependencies import (
-    events_formatter,
-    session_manager,
-    trusted_identity,
-)
+from agent.common.http_dependencies import events_formatter, trusted_identity
 from agent.common.http_mapping import stream_event
 from agent.core.models import IdentityContext
 from agent.core.observability import bind_observability_context
-from agent.core.session_manager import SessionManager
 from agent.formatters import EventsFormatter
 from agent_common import (
     AgentResumeRequest,
@@ -80,19 +75,8 @@ async def resume_stream(
     body: AgentResumeRequest,
     identity: Annotated[IdentityContext, Depends(trusted_identity)],
     formatter: Annotated[EventsFormatter, Depends(events_formatter)],
-    sessions: Annotated[SessionManager, Depends(session_manager)],
 ) -> StreamingResponse:
     request_id = uuid4().hex
-    try:
-        session_id = sessions.run_state_session_id(
-            body.resume_token,
-            identity.subject_id,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-
     decisions = {item.interruption_id: item.decision for item in body.decisions}
     if len(decisions) != len(body.decisions):
         raise HTTPException(status_code=400, detail="Duplicate interruption IDs")
@@ -100,8 +84,8 @@ async def resume_stream(
     async def events() -> AsyncIterator[str]:
         try:
             with bind_observability_context(identity, request_id):
-                async for envelope, resumed_session_id in formatter.resume(
-                    body.resume_token,
+                async for envelope in formatter.resume(
+                    body.session_id,
                     decisions,
                     identity,
                     request_id=request_id,
@@ -109,14 +93,14 @@ async def resume_stream(
                     event = stream_event(
                         envelope,
                         request_id=request_id,
-                        session_id=resumed_session_id,
+                        session_id=body.session_id,
                     )
                     yield _encode_sse(event)
         except ValueError as exc:
             error = StreamEvent(
                 sequence=1,
                 request_id=request_id,
-                session_id=session_id,
+                session_id=body.session_id,
                 source=EventSource(
                     agent_name="agent-service",
                     invocation_id=request_id,

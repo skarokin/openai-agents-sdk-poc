@@ -5,6 +5,7 @@ from .config import (
     McpToolConfig,
     ServiceConfig,
     ToolConfig,
+    hitl_allowed_tools,
     load_service_config,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "McpToolConfig",
     "ServiceConfig",
     "ToolConfig",
+    "hitl_allowed_tools",
     "load_service_config",
 ]

@@ -11,4 +11,3 @@ class SubagentSpec:
     instructions: str
     description: str
     tools: tuple[str, ...]
-    needs_approval: bool = False

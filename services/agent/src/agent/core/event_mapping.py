@@ -1,21 +1,13 @@
-"""Normalize OpenAI Agents SDK results into service-owned event models."""
+"""Normalize Strands Agents results into service-owned event models."""
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
-from agents import (
-    AgentUpdatedStreamEvent,
-    RawResponsesStreamEvent,
-    RunContextWrapper,
-    RunItemStreamEvent,
-    StreamEvent,
-    ToolApprovalItem,
-)
+from strands.interrupt import Interrupt
 
-from agent.controls.interrupts.approval import approval_policy_for_item
 from agent.core.models import (
-    AgentChanged,
     AgentContext,
     ApprovalRequest,
     ReasoningChunk,
@@ -26,157 +18,211 @@ from agent.core.models import (
     UsageUpdate,
 )
 
+_APPROVE_PROMPT_RE = re.compile(r'^Approve "([^"]+)"')
 
-def _value(raw: Any, name: str, default: Any = None) -> Any:
+
+def _arguments(raw: Any) -> dict[str, Any]:
     if isinstance(raw, Mapping):
-        return raw.get(name, default)
-    return getattr(raw, name, default)
-
-
-def _arguments(raw_arguments: Any) -> dict[str, Any]:
-    if isinstance(raw_arguments, Mapping):
-        return dict(raw_arguments)
-    if isinstance(raw_arguments, str):
+        return dict(raw)
+    if isinstance(raw, str):
         try:
-            parsed = json.loads(raw_arguments)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
-            return {"raw": raw_arguments}
+            return {"raw": raw}
         return dict(parsed) if isinstance(parsed, Mapping) else {"value": parsed}
-    return {} if raw_arguments is None else {"value": raw_arguments}
-
-
-def _resolve_tool_name(
-    item: Any,
-    raw_item: Any,
-    *,
-    tool_calls: Mapping[str, str] | None = None,
-) -> str:
-    name = _value(raw_item, "name", None)
-    if isinstance(name, str) and name:
-        return name
-
-    call_id = str(_value(raw_item, "call_id", _value(raw_item, "id", "")))
-    if tool_calls and call_id in tool_calls:
-        return tool_calls[call_id]
-
-    tool_origin = getattr(item, "tool_origin", None)
-    if tool_origin is not None:
-        origin_name = getattr(tool_origin, "agent_tool_name", None)
-        if isinstance(origin_name, str) and origin_name:
-            return origin_name
-
-    return "unknown_tool"
+    return {} if raw is None else {"value": raw}
 
 
 def map_stream_event(
-    event: StreamEvent,
+    event: Mapping[str, Any],
     *,
-    previous_agent_name: str | None = None,
     tool_calls: dict[str, str] | None = None,
 ) -> list[RunEvent]:
-    """Map one SDK stream event to zero or more protocol-neutral events."""
+    """Map one Strands stream event dict to zero or more protocol-neutral events."""
 
-    if isinstance(event, RawResponsesStreamEvent):
-        event_type = _value(event.data, "type", "")
-        delta = _value(event.data, "delta")
-        if event_type == "response.output_text.delta" and isinstance(delta, str):
-            return [TextChunk(delta=delta)]
+    if "data" in event and isinstance(event.get("data"), str):
+        if event.get("reasoning"):
+            return []
+        return [TextChunk(delta=event["data"])]
 
-        if event_type in {
-            "response.reasoning_summary_text.delta",
-            "response.reasoning_text.delta",
-        } and isinstance(delta, str):
-            return [ReasoningChunk(delta=delta)]
+    if event.get("reasoning") and isinstance(event.get("reasoningText"), str):
+        return [ReasoningChunk(delta=event["reasoningText"])]
 
-        return []
-
-    if isinstance(event, AgentUpdatedStreamEvent):
-        return [
-            AgentChanged(
-                agent_name=event.new_agent.name,
-                previous_agent_name=previous_agent_name,
-            )
-        ]
-
-    if not isinstance(event, RunItemStreamEvent):
-        return []
-
-    item = event.item
-    raw_item = getattr(item, "raw_item", None)
-    if event.name == "tool_called":
-        call_id = str(_value(raw_item, "call_id", _value(raw_item, "id", "")))
-        tool_name = _resolve_tool_name(item, raw_item, tool_calls=tool_calls)
-        if tool_calls is not None and call_id:
+    tool_use = event.get("current_tool_use")
+    if isinstance(tool_use, Mapping) and tool_use.get("name"):
+        call_id = str(tool_use.get("toolUseId") or tool_use.get("tool_use_id") or "")
+        tool_name = str(tool_use["name"])
+        # current_tool_use is re-emitted on every input delta; only announce once.
+        if not call_id:
+            return []
+        if tool_calls is not None:
+            if call_id in tool_calls:
+                return []
             tool_calls[call_id] = tool_name
-
         return [
             ToolStart(
                 call_id=call_id,
                 tool_name=tool_name,
-                arguments=_arguments(_value(raw_item, "arguments")),
+                arguments=_arguments(tool_use.get("input")),
             )
         ]
 
-    if event.name == "tool_output":
-        return [
-            ToolResult(
-                call_id=str(_value(raw_item, "call_id", _value(raw_item, "id", ""))),
-                tool_name=_resolve_tool_name(item, raw_item, tool_calls=tool_calls),
-                output=getattr(item, "output", _value(raw_item, "output")),
-            )
-        ]
+    message = event.get("message")
+    if isinstance(message, Mapping) and message.get("role") == "user":
+        content = message.get("content")
+        if isinstance(content, list):
+            results: list[RunEvent] = []
+            for block in content:
+                if not isinstance(block, Mapping) or "toolResult" not in block:
+                    continue
+                tool_result = block["toolResult"]
+                if not isinstance(tool_result, Mapping):
+                    continue
+                call_id = str(tool_result.get("toolUseId") or "")
+                tool_name = (
+                    tool_calls.get(call_id, "")
+                    if tool_calls is not None
+                    else ""
+                )
+                results.append(
+                    ToolResult(
+                        call_id=call_id,
+                        tool_name=tool_name,
+                        output=tool_result.get("content"),
+                    )
+                )
+            return results
 
     return []
 
 
-def map_usage(usage: Any) -> UsageUpdate:
+def map_usage(metrics: Any) -> UsageUpdate:
+    usage = getattr(metrics, "accumulated_usage", None) or {}
+    if isinstance(usage, Mapping):
+        return UsageUpdate(
+            requests=int(getattr(metrics, "cycle_count", 0) or 0),
+            input_tokens=int(usage.get("inputTokens", 0) or 0),
+            output_tokens=int(usage.get("outputTokens", 0) or 0),
+            total_tokens=int(usage.get("totalTokens", 0) or 0),
+        )
     return UsageUpdate(
-        requests=int(getattr(usage, "requests", 0)),
-        input_tokens=int(getattr(usage, "input_tokens", 0)),
-        output_tokens=int(getattr(usage, "output_tokens", 0)),
-        total_tokens=int(getattr(usage, "total_tokens", 0)),
+        requests=int(getattr(metrics, "cycle_count", 0) or 0),
+        input_tokens=int(getattr(usage, "inputTokens", 0) or 0),
+        output_tokens=int(getattr(usage, "outputTokens", 0) or 0),
+        total_tokens=int(getattr(usage, "totalTokens", 0) or 0),
     )
 
 
-def approval_id(item: ToolApprovalItem, index: int) -> str:
-    return item.call_id or f"approval-{index}"
+def _tool_name_from_hitl_reason(reason: Any) -> str | None:
+    if not isinstance(reason, str):
+        return None
+    match = _APPROVE_PROMPT_RE.match(reason.strip())
+    return match.group(1) if match else None
 
 
-def map_approvals(
-    items: list[ToolApprovalItem],
+def _arguments_from_hitl_reason(reason: Any) -> dict[str, Any]:
+    if not isinstance(reason, str):
+        return {}
+    marker = "Input: "
+    index = reason.rfind(marker)
+    if index < 0:
+        return {}
+    return _arguments(reason[index + len(marker) :].strip())
+
+
+def map_interrupts(
+    interrupts: list[Interrupt] | tuple[Interrupt, ...] | None,
     *,
     agent_context: AgentContext | None = None,
-    run_context: RunContextWrapper[AgentContext] | None = None,
+    agent_name: str | None = None,
 ) -> tuple[ApprovalRequest, ...]:
+    """Map Strands Interrupt objects into protocol ApprovalRequest models."""
+
+    if not interrupts:
+        return ()
+
     approvals: list[ApprovalRequest] = []
-
-    for index, item in enumerate(items):
-        tool_name = item.name or "unknown_tool"
-        call_id = approval_id(item, index)
-        policy = approval_policy_for_item(item)
-        service = policy.vault_service if policy.requires_auth else None
-        authenticated = False
-        challenge = None
-        if policy.requires_auth and agent_context is not None and service is not None:
-            authenticated = (
-                agent_context.token_vault.peek(agent_context.identity, service)
-                is not None
+    for item in interrupts:
+        reason = item.reason
+        if isinstance(reason, Mapping) and reason.get("requires_auth"):
+            service = str(reason.get("service") or "")
+            challenge_url = reason.get("authorization_url")
+            authenticated = False
+            if agent_context is not None and service:
+                authenticated = (
+                    agent_context.token_vault.peek(agent_context.identity, service)
+                    is not None
+                )
+            approvals.append(
+                ApprovalRequest(
+                    interruption_id=item.id,
+                    tool_name=str(reason.get("tool_name") or item.name),
+                    arguments=_arguments(reason.get("arguments")),
+                    agent_name=agent_name,
+                    requires_auth=True,
+                    requires_approval=bool(reason.get("requires_approval", False)),
+                    authenticated=authenticated,
+                    service=service or None,
+                    authorization_url=(
+                        str(challenge_url) if challenge_url is not None else None
+                    ),
+                )
             )
-            challenge = agent_context.token_vault.challenge(service)
+            continue
 
+        tool_name = _tool_name_from_hitl_reason(reason) or item.name
         approvals.append(
             ApprovalRequest(
-                interruption_id=call_id,
+                interruption_id=item.id,
                 tool_name=tool_name,
-                arguments=_arguments(item.arguments),
-                agent_name=item.agent.name,
-                requires_auth=policy.requires_auth,
-                requires_approval=policy.requires_approval,
-                authenticated=authenticated,
-                service=challenge.service if challenge is not None else None,
-                authorization_url=(
-                    challenge.authorization_url if challenge is not None else None
-                ),
+                arguments=_arguments_from_hitl_reason(reason),
+                agent_name=agent_name,
+                requires_auth=False,
+                requires_approval=True,
             )
         )
+
     return tuple(approvals)
+
+
+def decision_to_interrupt_response(interrupt_id: str, decision: str) -> dict[str, Any]:
+    """Convert HTTP approve/reject into Strands interruptResponse content."""
+
+    if decision == "approve":
+        response: Any = "yes"
+    elif decision == "reject":
+        response = "n"
+    else:
+        raise ValueError(f"Unsupported decision: {decision}")
+
+    return {
+        "interruptResponse": {
+            "interruptId": interrupt_id,
+            "response": response,
+        }
+    }
+
+
+def final_output_text(message: Any) -> str:
+    """Extract assistant text from an AgentResult message."""
+
+    if message is None:
+        return ""
+    if isinstance(message, str):
+        return message
+    content = (
+        message.get("content")
+        if isinstance(message, Mapping)
+        else getattr(message, "content", None)
+    )
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(message)
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, Mapping) and "text" in block:
+            parts.append(str(block["text"]))
+        elif hasattr(block, "get") and block.get("text"):
+            parts.append(str(block.get("text")))
+    return "".join(parts)

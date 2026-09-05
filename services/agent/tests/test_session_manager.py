@@ -1,62 +1,19 @@
-"""JSON session persistence tests."""
+"""FileSessionManager helper tests."""
 
 import tempfile
 from pathlib import Path
-from typing import Any, cast
-from unittest.mock import MagicMock
 
-import pytest
+from strands.session.file_session_manager import FileSessionManager
 
-from agent.core.session_manager import SessionManager
+from agent.core.sessions import make_file_session_manager, scoped_session_id
 
 
-@pytest.mark.asyncio
-async def test_json_session_round_trip():
+def test_file_session_is_scoped_by_owner(monkeypatch):
     with tempfile.TemporaryDirectory() as directory:
-        manager = SessionManager(Path(directory))
-        session = manager.session("example/session", "session-owner")
-        await session.add_items(
-            [
-                {
-                    "role": "user",
-                    "content": "hello",
-                }
-            ]
-        )
-
-        stored = cast(dict[str, Any], (await session.get_items())[0])
-        assert stored["role"] == "user"
-        popped = await session.pop_item()
-        assert popped is not None
-        assert await session.get_items() == []
-
-
-@pytest.mark.asyncio
-async def test_sessions_are_isolated_by_owner():
-    with tempfile.TemporaryDirectory() as directory:
-        manager = SessionManager(Path(directory))
-        owner_session = manager.session("shared", "owner")
-        await owner_session.add_items([{"role": "user", "content": "hello"}])
-        other_session = manager.session("shared", "intruder")
-        assert await other_session.get_items() == []
-        stored = await owner_session.get_items()
-        assert stored[0]["role"] == "user"
-
-
-@pytest.mark.asyncio
-async def test_save_run_state_recreates_run_state_dir():
-    with tempfile.TemporaryDirectory() as directory:
-        manager = SessionManager(Path(directory))
-        run_state_dir = Path(directory) / "run_states"
-        run_state_dir.rmdir()
-
-        state = MagicMock()
-        state.to_json.return_value = "{}"
-
-        token = await manager.save_run_state(
-            state,
-            session_id="session-1",
-            owner_subject_id="owner",
-        )
-        assert run_state_dir.is_dir()
-        assert (run_state_dir / f"{token}.json").is_file()
+        monkeypatch.setenv("AGENT_DATA_DIR", directory)
+        owner = make_file_session_manager("shared", "owner")
+        other = make_file_session_manager("shared", "intruder")
+        assert isinstance(owner, FileSessionManager)
+        assert owner.session_id != other.session_id
+        assert owner.session_id == scoped_session_id("shared", "owner")
+        assert Path(directory, "sessions").is_dir()

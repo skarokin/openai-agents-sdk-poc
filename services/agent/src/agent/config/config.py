@@ -21,6 +21,7 @@ class AgentConfig(ConfigModel):
 
 class McpToolConfig(ConfigModel):
     allowed_roles: frozenset[str] = Field(default_factory=frozenset)
+    hitl: bool = False
 
 
 class ToolConfig(ConfigModel):
@@ -28,12 +29,44 @@ class ToolConfig(ConfigModel):
     type: Literal["function", "mcp"] = "function"
     enabled: bool = True
     allowed_roles: frozenset[str] = Field(default_factory=frozenset)
+    hitl: bool = False
     tools: dict[str, McpToolConfig] = Field(default_factory=dict)
 
 
 class ServiceConfig(ConfigModel):
     agent: AgentConfig
     tools: dict[str, ToolConfig]
+
+    @property
+    def hitl_tools(self) -> frozenset[str]:
+        """Function / subagent catalog entries that require HumanInTheLoop."""
+
+        return frozenset(
+            name
+            for name, settings in self.tools.items()
+            if settings.type != "mcp" and settings.enabled and settings.hitl
+        )
+
+    @property
+    def mcp_hitl_tools(self) -> frozenset[str]:
+        """MCP child tool names that require HumanInTheLoop."""
+
+        names: set[str] = set()
+        for settings in self.tools.values():
+            if settings.type != "mcp" or not settings.enabled:
+                continue
+            for child_name, child in settings.tools.items():
+                if child.hitl:
+                    names.add(child_name)
+        return frozenset(names)
+
+    @property
+    def all_hitl_tools(self) -> frozenset[str]:
+        return self.hitl_tools | self.mcp_hitl_tools
+
+
+def hitl_allowed_tools(required: frozenset[str] | set[str]) -> list[str]:
+    return ["*", *[f"!{name}" for name in sorted(required)]]
 
 
 def _load_yaml(path: Path) -> dict:

@@ -1,17 +1,17 @@
 """Shared runtime construction for formatters."""
 
 import time
+from typing import Any
 
-from agents import RunConfig
+from strands.types.agent import Limits
 
-from agent.controls.guardrails import TokenVault
 from agent.controls.hooks import SOFT_DEADLINE_SECONDS
-from agent.core.models import AgentContext, EventSink, IdentityContext
+from agent.core.models import AgentContext, IdentityContext
+from agent.core.token_vault import TokenVault
 
 
 def create_agent_context(
     identity: IdentityContext,
-    event_sink: EventSink,
     *,
     request_id: str,
     session_id: str,
@@ -19,7 +19,6 @@ def create_agent_context(
 ) -> AgentContext:
     return AgentContext(
         identity=identity,
-        event_sink=event_sink,
         request_id=request_id,
         session_id=session_id,
         deadline_epoch_seconds=time.time() + SOFT_DEADLINE_SECONDS,
@@ -27,15 +26,18 @@ def create_agent_context(
     )
 
 
-def create_run_config(context: AgentContext) -> RunConfig:
-    return RunConfig(
-        workflow_name="multi-protocol-agent",
-        group_id=context.session_id,
-        trace_include_sensitive_data=False,
-        trace_metadata={
-            "request_id": context.request_id,
-            "subject_id": context.identity.subject_id,
-            "actor_id": context.identity.actor_id or "",
-            "roles": ",".join(sorted(context.identity.roles)),
-        },
-    )
+def create_limits(max_turns: int) -> Limits:
+    return Limits(turns=max_turns)
+
+
+def create_trace_attributes(context: AgentContext) -> dict[str, Any]:
+    """Trace metadata attached at Agent construction."""
+
+    return {
+        "workflow.name": "multi-protocol-agent",
+        "session.id": context.session_id,
+        "request_id": context.request_id,
+        "subject_id": context.identity.subject_id,
+        "actor_id": context.identity.actor_id or "",
+        "roles": ",".join(sorted(context.identity.roles)),
+    }

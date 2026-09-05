@@ -43,6 +43,8 @@ class AgentClient:
             timeout=None,
         )
         self._last_text_source: tuple[str, str] | None = None
+        # current_tool_use carries the name; toolResult only has toolUseId.
+        self._tool_names: dict[str, str] = {}
 
     def close(self) -> None:
         self._client.close()
@@ -131,7 +133,7 @@ class AgentClient:
                 response = self._post(
                     "/v1/agent/runs/resume",
                     AgentResumeRequest(
-                        resume_token=response.resume_token,
+                        session_id=response.session_id,
                         decisions=self._decisions(
                             [
                                 item.model_dump(mode="json")
@@ -181,10 +183,22 @@ class AgentClient:
         elif event.event_type == "reasoning_chunk":
             print(f"\n[{source} reasoning] {data.get('delta', '')}", end="")
         elif event.event_type == "tool_start":
-            print(f"\n[{source} → {data.get('tool_name')}]")
+            call_id = str(data.get("call_id") or "")
+            tool_name = str(data.get("tool_name") or "")
+            if call_id and tool_name:
+                self._tool_names[call_id] = tool_name
+
+            print(f"\n[{source} → {tool_name or call_id}]")
         elif event.event_type == "tool_result":
+            call_id = str(data.get("call_id") or "")
+            tool_name = (
+                self._tool_names.get(call_id)
+                or data.get("tool_name")
+                or call_id
+                or "tool"
+            )
             print(
-                f"\n[{source} ← {data.get('tool_name')}: {_render(data.get('output'))}]"
+                f"\n[{source} ← {tool_name}: {_render(data.get('output'))}]"
             )
         elif event.event_type == "auth_required":
             print(
@@ -196,6 +210,8 @@ class AgentClient:
             print(f"\n[guardrail: {data.get('message')}]")
         elif event.event_type == "turn_error":
             print(f"\n[error: {data.get('code')}] {data.get('message')}")
+        elif event.event_type == "turn_complete":
+            self._tool_names.clear()
 
     def run_sse(self, prompt: str, session_id: str) -> None:
         self._last_text_source = None
@@ -218,7 +234,7 @@ class AgentClient:
                     )
             if interrupted is not None:
                 body = AgentResumeRequest(
-                    resume_token=interrupted["resume_token"],
+                    session_id=session_id,
                     decisions=self._decisions(interrupted["interruptions"]),
                 ).model_dump(mode="json")
                 path = "/v1/agent/runs/stream/resume"

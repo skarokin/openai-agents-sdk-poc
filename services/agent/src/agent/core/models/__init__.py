@@ -5,23 +5,21 @@ from dataclasses import dataclass
 from .context import AgentContext, Query
 from .events import (
     AgentChanged,
+    ApprovalRequest,
     AuthRequired,
+    CompleteResult,
     EventSource,
-    GuardrailTripped,
     ReasoningChunk,
     TextChunk,
     ToolResult,
     ToolStart,
-    UsageUpdate,
-    ApprovalRequest,
-    CompleteResult,
     TurnComplete,
     TurnError,
     TurnInterrupt,
     TurnOutcome,
+    UsageUpdate,
 )
 from .identity import IdentityContext
-from .sink import EventSink
 from .tools import SubagentSpec
 
 type RunEvent = (
@@ -29,20 +27,12 @@ type RunEvent = (
     | ReasoningChunk
     | ToolStart
     | ToolResult
-    | GuardrailTripped
     | AuthRequired
     | UsageUpdate
     | AgentChanged
     | TurnOutcome
     | ApprovalRequest
 )
-
-
-class NoOpEventSink:
-    """Discard events when the caller does not request streaming output."""
-
-    async def emit(self, event: RunEvent, *, source: EventSource) -> None:
-        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,11 +51,8 @@ __all__ = [
     "AuthRequired",
     "CompleteResult",
     "EventEnvelope",
-    "EventSink",
     "EventSource",
-    "GuardrailTripped",
     "IdentityContext",
-    "NoOpEventSink",
     "Query",
     "ReasoningChunk",
     "RunEvent",

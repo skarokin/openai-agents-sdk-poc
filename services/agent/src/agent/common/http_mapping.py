@@ -8,7 +8,6 @@ from agent.core.models import (
     AuthRequired,
     CompleteResult,
     EventEnvelope,
-    GuardrailTripped,
     ReasoningChunk,
     TextChunk,
     ToolResult,
@@ -93,13 +92,9 @@ def complete_response(
         )
 
     if isinstance(outcome, TurnInterrupt):
-        if outcome.resume_token is None:
-            raise RuntimeError("Interrupted result was not persisted")
-
         return InterruptedResponse(
             request_id=request_id,
             session_id=session_id,
-            resume_token=outcome.resume_token,
             interruptions=_approvals(outcome.interruptions),
         )
 
@@ -143,8 +138,6 @@ def stream_event(
                 "output": event.output,
             },
         )
-    elif isinstance(event, GuardrailTripped):
-        event_type, data = "guardrail_tripped", asdict(event)
     elif isinstance(event, AuthRequired):
         event_type, data = "auth_required", asdict(event)
     elif isinstance(event, UsageUpdate):
@@ -161,12 +154,9 @@ def stream_event(
             },
         )
     elif isinstance(event, TurnInterrupt):
-        if event.resume_token is None:
-            raise RuntimeError("Interrupted event was not persisted")
         event_type, data = (
             "turn_interrupt",
             {
-                "resume_token": str(event.resume_token),
                 "interruptions": [
                     {
                         "interruption_id": item.interruption_id,

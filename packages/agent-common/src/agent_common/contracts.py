@@ -1,7 +1,6 @@
 """Shared Pydantic contracts for the agent HTTP APIs."""
 
 from typing import Annotated, Any, Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -49,9 +48,9 @@ class ApprovalDecision(ContractModel):
 
 
 class AgentResumeRequest(ContractModel):
-    """Resume an interrupted agent turn."""
+    """Resume an interrupted agent turn via the same session_id."""
 
-    resume_token: UUID
+    session_id: str = Field(min_length=1)
     decisions: tuple[ApprovalDecision, ...] = Field(min_length=1)
 
 
@@ -104,7 +103,6 @@ class InterruptedResponse(ContractModel):
     status: Literal["interrupted"] = "interrupted"
     request_id: str
     session_id: str
-    resume_token: UUID
     interruptions: tuple[ApprovalRequest, ...]
 
 

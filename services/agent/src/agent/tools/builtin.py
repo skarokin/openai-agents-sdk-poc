@@ -5,12 +5,10 @@ import logging
 import operator
 from collections.abc import Callable
 
-from agents import RunContextWrapper
-from agents.decorators import tool
+from strands import tool
+from strands.types.tools import ToolContext
 
-from agent.controls.guardrails import auth_guardrail, get_access_token
-from agent.controls.interrupts import auth_required, hitl_auth_required
-from agent.core.models import AgentContext
+from agent.controls.interrupts import identity_from_tool_context, require_vault_token
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +43,8 @@ def _evaluate(node: ast.AST) -> float:
     raise ValueError("Expression contains unsupported syntax")
 
 
-@tool
-async def calculator(
-    context: RunContextWrapper[AgentContext],
-    expression: str,
-) -> str:
+@tool(context=True)
+def calculator(tool_context: ToolContext, expression: str) -> str:
     """Evaluate a basic arithmetic expression.
 
     Args:
@@ -58,65 +53,51 @@ async def calculator(
 
     if len(expression) > 200:
         raise ValueError("Expression is too long")
-    logger.info(
-        "calculator invoked",
-        extra={"subject_id": context.context.identity.subject_id},
-    )
+    identity = identity_from_tool_context(tool_context)
+    logger.info("calculator invoked", extra={"subject_id": identity.subject_id})
     result = _evaluate(ast.parse(expression, mode="eval"))
     return f"{result:g}"
 
 
-@tool(needs_approval=True)
-async def approval_demo(context: RunContextWrapper[AgentContext]) -> str:
-    """
-    This tool is a demo of the approval workflow. It will return a confirmation after the caller approves it.
-    """
+@tool(context=True)
+def approval_demo(tool_context: ToolContext) -> str:
+    """Demo HITL approval. Gated by HumanInTheLoop intervention before execution."""
 
-    logger.info(
-        "approval demo tool invoked",
-        extra={"subject_id": context.context.identity.subject_id},
-    )
+    identity = identity_from_tool_context(tool_context)
+    logger.info("approval demo tool invoked", extra={"subject_id": identity.subject_id})
     return "tool approved!"
 
 
-@tool(
-    needs_approval=auth_required("authentication_demo"),
-    tool_input_guardrails=[auth_guardrail("authentication_demo")],
-)
-async def authentication_demo(context: RunContextWrapper[AgentContext]) -> str:
-    """
-    This tool is a demo of the authentication workflow. It will return a confirmation after the caller authenticates.
-    """
+@tool(context=True)
+async def authentication_demo(tool_context: ToolContext) -> str:
+    """Demo auth interrupt raised inside the tool (separate from HITL)."""
 
-    access_token = await get_access_token(context.context, "authentication_demo")
-
+    access_token = await require_vault_token(
+        tool_context,
+        service="authentication_demo",
+        tool_name="authentication_demo",
+    )
+    identity = identity_from_tool_context(tool_context)
     logger.info(
         "authentication demo tool invoked",
-        extra={
-            "subject_id": context.context.identity.subject_id,
-            "access_token": access_token,
-        },
+        extra={"subject_id": identity.subject_id, "access_token": access_token},
     )
     return "at this point, user has authenticated successfully!"
 
 
-@tool(
-    needs_approval=hitl_auth_required("auth_approval_demo"),
-    tool_input_guardrails=[auth_guardrail("auth_approval_demo")],
-)
-async def auth_approval_demo(context: RunContextWrapper[AgentContext]) -> str:
-    """
-    This tool is a demo of the authentication and approval workflow. It will return a confirmation after the caller authenticates and approves it.
-    """
+@tool(context=True)
+async def auth_approval_demo(tool_context: ToolContext) -> str:
+    """HITL via HumanInTheLoop (config hitl: true); auth via vault interrupt here."""
 
-    access_token = await get_access_token(context.context, "auth_approval_demo")
-
+    access_token = await require_vault_token(
+        tool_context,
+        service="auth_approval_demo",
+        tool_name="auth_approval_demo",
+    )
+    identity = identity_from_tool_context(tool_context)
     logger.info(
         "auth approval demo tool invoked",
-        extra={
-            "subject_id": context.context.identity.subject_id,
-            "access_token": access_token,
-        },
+        extra={"subject_id": identity.subject_id, "access_token": access_token},
     )
     return (
         "at this point, user has authenticated successfully "

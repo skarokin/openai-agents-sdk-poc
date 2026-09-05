@@ -1,10 +1,9 @@
-"""Soft-deadline enforcement via RunHooks. Nested runs get this hook via as_tool(hooks=...)."""
+"""Soft-deadline enforcement via Strands hooks."""
 
 import logging
+from typing import Any
 
-from agents import RunHooks
-
-from agent.core.models import AgentContext
+from strands.hooks import BeforeModelCallEvent, HookProvider, HookRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -15,29 +14,36 @@ SOFT_DEADLINE_MESSAGE = (
 )
 
 
-class SoftDeadlineHook(RunHooks[AgentContext]):
+class SoftDeadlineHook(HookProvider):
     """If the deadline has passed, steer the next model call to finish without tools."""
 
-    async def on_llm_start(self, context, agent, system_prompt, input_items) -> None:
-        if not context.context.deadline_exceeded:
+    def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        registry.add_callback(BeforeModelCallEvent, self.on_before_model)
+
+    def on_before_model(self, event: BeforeModelCallEvent) -> None:
+        deadline = event.agent.state.get("deadline_epoch_seconds")
+        if deadline is None:
             return
 
+        import time
+
+        if time.time() < float(deadline):
+            return
+
+        request_id = event.agent.state.get("request_id") or "-"
+        identity = event.agent.state.get("identity") or {}
         logger.warning(
-            "soft deadline exceeded at llm_start:%s",
-            agent.name,
+            "soft deadline exceeded at before_model:%s",
+            event.agent.name,
             extra={
-                "request_id": context.context.request_id,
-                "subject_id": context.context.identity.subject_id,
+                "request_id": request_id,
+                "subject_id": identity.get("subject_id", "-"),
             },
         )
-
-        if input_items is None:
-            return
-
-        input_items.append(
+        event.agent.messages.append(
             {
-                "role": "developer",
-                "content": SOFT_DEADLINE_MESSAGE,
+                "role": "user",
+                "content": [{"text": SOFT_DEADLINE_MESSAGE}],
             }
         )
 

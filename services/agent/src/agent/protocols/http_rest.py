@@ -51,21 +51,17 @@ async def resume_agent(
         raise HTTPException(status_code=400, detail="Duplicate interruption IDs")
     try:
         with bind_observability_context(identity, request_id):
-            result, session_id = await formatter.resume(
-                body.resume_token,
+            result = await formatter.resume(
+                body.session_id,
                 decisions,
                 identity,
                 request_id=request_id,
             )
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return complete_response(
         result,
         request_id=request_id,
-        session_id=session_id,
+        session_id=body.session_id,
     )

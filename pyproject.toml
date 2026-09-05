@@ -2,7 +2,9 @@
 name = "agentpoc"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "strands-agents[openai]>=1.54.0",
+]
 
 [dependency-groups]
 dev = [
@@ -86,7 +88,7 @@ pretty = true
 
 [[tool.mypy.overrides]]
 module = [
-    "agents.*",
+    "strands.*",
     "mcp.*",
     "opentelemetry.*",
     "uvicorn.*",

@@ -4,9 +4,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from agents import RunState
-from uuid import UUID
-
 
 @dataclass(frozen=True, slots=True)
 class UsageUpdate:
@@ -51,15 +48,6 @@ class ToolResult:
 
 
 @dataclass(frozen=True, slots=True)
-class GuardrailTripped:
-    """A guardrail blocked the run or a tool invocation."""
-
-    guardrail_name: str
-    kind: Literal["input", "output", "tool_input", "tool_output"]
-    message: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class AuthRequired:
     """A tool was blocked because the caller lacks a vault token for a service."""
 
@@ -89,7 +77,7 @@ class EventSource:
 
 @dataclass(frozen=True, slots=True)
 class ApprovalRequest:
-    """A tool invocation awaiting an external approval decision."""
+    """A tool invocation awaiting an external approval / auth decision."""
 
     interruption_id: str
     tool_name: str
@@ -113,11 +101,9 @@ class TurnComplete:
 
 @dataclass(frozen=True, slots=True)
 class TurnInterrupt:
-    """The run paused pending one or more approval decisions."""
+    """The run paused pending interrupt responses (session holds the state)."""
 
     interruptions: tuple[ApprovalRequest, ...]
-    run_state: RunState[Any]
-    resume_token: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

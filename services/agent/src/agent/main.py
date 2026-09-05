@@ -9,9 +9,8 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 
 from agent.common.http_dependencies import trusted_identity
 from agent.config import load_service_config
-from agent.core import SessionManager
+from agent.core import TokenVault
 from agent.core.agent_factory import AgentFactory
-from agent.controls.guardrails import TokenVault
 from agent.core.models import IdentityContext
 from agent.core.observability import (
     setup_observability,
@@ -25,13 +24,11 @@ from agent_common import HealthResponse, VaultTokenRequest, VaultTokenResponse
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = load_service_config()
-    sessions = SessionManager.from_environment()
     token_vault = TokenVault.from_environment()
     factory = AgentFactory(config)
-    app.state.session_manager = sessions
     app.state.token_vault = token_vault
-    app.state.complete_formatter = CompleteFormatter(factory, sessions, token_vault)
-    app.state.events_formatter = EventsFormatter(factory, sessions, token_vault)
+    app.state.complete_formatter = CompleteFormatter(factory, token_vault)
+    app.state.events_formatter = EventsFormatter(factory, token_vault)
     try:
         yield
     finally:

@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import Header, HTTPException, Request
 
 from agent.core.models import IdentityContext
-from agent.core.session_manager import SessionManager
 from agent.formatters import CompleteFormatter, EventsFormatter
 from agent_common import ACTOR_HEADER, ROLES_HEADER, SUBJECT_HEADER
 
@@ -38,7 +37,3 @@ def complete_formatter(request: Request) -> CompleteFormatter:
 
 def events_formatter(request: Request) -> EventsFormatter:
     return request.app.state.events_formatter
-
-
-def session_manager(request: Request) -> SessionManager:
-    return request.app.state.session_manager
