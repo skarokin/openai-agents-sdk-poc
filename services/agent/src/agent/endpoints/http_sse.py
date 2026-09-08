@@ -1,4 +1,4 @@
-"""SSE protocol adapter for normalized agent events."""
+"""SSE endpoint for normalized agent events."""
 
 from collections.abc import AsyncIterator
 from typing import Annotated
@@ -7,11 +7,10 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from agent.common.http_dependencies import events_formatter, trusted_identity
+from agent.common.http_dependencies import agent_runner, trusted_identity
 from agent.common.http_mapping import stream_event
 from agent.core.models import IdentityContext
-from agent.core.observability import bind_observability_context
-from agent.formatters import EventsFormatter
+from agent.runners import AgentRunner
 from agent_common import (
     AgentResumeRequest,
     AgentRunRequest,
@@ -46,26 +45,25 @@ def _response(events: AsyncIterator[str]) -> StreamingResponse:
 async def stream_agent(
     body: AgentRunRequest,
     identity: Annotated[IdentityContext, Depends(trusted_identity)],
-    formatter: Annotated[EventsFormatter, Depends(events_formatter)],
+    runner: Annotated[AgentRunner, Depends(agent_runner)],
 ) -> StreamingResponse:
     request_id = uuid4().hex
     session_id = body.session_id or uuid4().hex
 
     async def events() -> AsyncIterator[str]:
-        with bind_observability_context(identity, request_id):
-            async for envelope in formatter.stream(
-                body.input,
-                identity,
+        async for envelope in runner.stream_run(
+            body.input,
+            identity,
+            request_id=request_id,
+            session_id=session_id,
+        ):
+            event = stream_event(
+                envelope,
                 request_id=request_id,
                 session_id=session_id,
-            ):
-                event = stream_event(
-                    envelope,
-                    request_id=request_id,
-                    session_id=session_id,
-                )
+            )
 
-                yield _encode_sse(event)
+            yield _encode_sse(event)
 
     return _response(events())
 
@@ -74,7 +72,7 @@ async def stream_agent(
 async def resume_stream(
     body: AgentResumeRequest,
     identity: Annotated[IdentityContext, Depends(trusted_identity)],
-    formatter: Annotated[EventsFormatter, Depends(events_formatter)],
+    runner: Annotated[AgentRunner, Depends(agent_runner)],
 ) -> StreamingResponse:
     request_id = uuid4().hex
     decisions = {item.interruption_id: item.decision for item in body.decisions}
@@ -83,19 +81,18 @@ async def resume_stream(
 
     async def events() -> AsyncIterator[str]:
         try:
-            with bind_observability_context(identity, request_id):
-                async for envelope in formatter.resume(
-                    body.session_id,
-                    decisions,
-                    identity,
+            async for envelope in runner.stream_resume(
+                body.session_id,
+                decisions,
+                identity,
+                request_id=request_id,
+            ):
+                event = stream_event(
+                    envelope,
                     request_id=request_id,
-                ):
-                    event = stream_event(
-                        envelope,
-                        request_id=request_id,
-                        session_id=body.session_id,
-                    )
-                    yield _encode_sse(event)
+                    session_id=body.session_id,
+                )
+                yield _encode_sse(event)
         except ValueError as exc:
             error = StreamEvent(
                 sequence=1,

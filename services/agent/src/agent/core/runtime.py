@@ -1,4 +1,4 @@
-"""Shared request/context construction for formatters."""
+"""Shared request/context construction for runners."""
 
 import time
 from typing import Any

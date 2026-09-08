@@ -1,11 +1,11 @@
-"""FastAPI dependencies shared by HTTP protocol adapters."""
+"""FastAPI dependencies shared by HTTP endpoints."""
 
 from typing import Annotated
 
 from fastapi import Header, HTTPException, Request
 
 from agent.core.models import IdentityContext
-from agent.formatters import CompleteFormatter, EventsFormatter
+from agent.runners import AgentRunner
 from agent_common import ACTOR_HEADER, ROLES_HEADER, SUBJECT_HEADER
 
 
@@ -31,9 +31,5 @@ def trusted_identity(
     )
 
 
-def complete_formatter(request: Request) -> CompleteFormatter:
-    return request.app.state.complete_formatter
-
-
-def events_formatter(request: Request) -> EventsFormatter:
-    return request.app.state.events_formatter
+def agent_runner(request: Request) -> AgentRunner:
+    return request.app.state.agent_runner

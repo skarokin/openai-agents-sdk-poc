@@ -1,4 +1,4 @@
-"""HTTP contract and protocol adapter smoke tests."""
+"""HTTP contract and endpoint smoke tests."""
 
 from collections.abc import AsyncIterator
 
@@ -17,8 +17,8 @@ from agent.core.models import (
 from agent.main import app
 
 
-class FakeCompleteFormatter:
-    async def run(
+class FakeAgentRunner:
+    async def sync_run(
         self,
         input_text: str,
         identity: IdentityContext,
@@ -33,9 +33,7 @@ class FakeCompleteFormatter:
             )
         )
 
-
-class FakeEventsFormatter:
-    async def stream(
+    async def stream_run(
         self,
         input_text: str,
         identity: IdentityContext,
@@ -65,8 +63,7 @@ class FakeEventsFormatter:
 @pytest.fixture
 def client():
     with TestClient(app) as test_client:
-        app.state.complete_formatter = FakeCompleteFormatter()
-        app.state.events_formatter = FakeEventsFormatter()
+        app.state.agent_runner = FakeAgentRunner()
         yield test_client
 
 

@@ -16,8 +16,8 @@ from agent.core.observability import (
     setup_observability,
     shutdown_observability,
 )
-from agent.formatters import CompleteFormatter, EventsFormatter
-from agent.protocols import rest_router, sse_router
+from agent.endpoints import rest_router, sse_router
+from agent.runners import AgentRunner
 from agent_common import HealthResponse, VaultTokenRequest, VaultTokenResponse
 
 
@@ -27,8 +27,7 @@ async def lifespan(app: FastAPI):
     token_vault = TokenVault.from_environment()
     factory = AgentFactory(config)
     app.state.token_vault = token_vault
-    app.state.complete_formatter = CompleteFormatter(factory, token_vault)
-    app.state.events_formatter = EventsFormatter(factory, token_vault)
+    app.state.agent_runner = AgentRunner(factory, token_vault)
     try:
         yield
     finally:

@@ -120,6 +120,6 @@ type TurnOutcome = TurnComplete | TurnInterrupt | TurnError
 
 @dataclass(frozen=True, slots=True)
 class CompleteResult:
-    """Result of an agent turn using the complete() formatter."""
+    """Result of an agent turn collected from the streaming runner."""
 
     outcome: TurnOutcome
