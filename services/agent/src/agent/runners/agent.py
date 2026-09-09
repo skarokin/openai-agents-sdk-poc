@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
 
 from strands import Agent
 
@@ -29,7 +31,6 @@ from agent.core.models import (
     EventEnvelope,
     EventSource,
     IdentityContext,
-    Query,
     TurnComplete,
     TurnError,
     TurnInterrupt,
@@ -40,6 +41,17 @@ from agent.core.runtime import create_agent_context, create_limits
 from agent.core.token_vault import TokenVault
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _Query:
+    """Input for either a new agent run or a resumed interrupted run."""
+
+    input: str | list[dict[str, Any]]
+
+    @property
+    def is_resume(self) -> bool:
+        return isinstance(self.input, list)
 
 
 class AgentRunner:
@@ -76,7 +88,7 @@ class AgentRunner:
 
     async def _stream_turn(
         self,
-        query: Query,
+        query: _Query,
         identity: IdentityContext,
         *,
         request_id: str,
@@ -183,7 +195,7 @@ class AgentRunner:
         stream the agent for one turn
         """
         async for event in self._stream_turn(
-            Query(input=input_text),
+            _Query(input=input_text),
             identity,
             request_id=request_id,
             session_id=session_id,
@@ -206,7 +218,7 @@ class AgentRunner:
             for interrupt_id, decision in decisions.items()
         ]
         async for event in self._stream_turn(
-            Query(input=responses),
+            _Query(input=responses),
             identity,
             request_id=request_id,
             session_id=session_id,

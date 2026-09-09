@@ -26,15 +26,12 @@ class IdentityContext:
 
     @classmethod
     def from_tool_context(cls, tool_context: ToolContext) -> IdentityContext:
-        """Resolve identity from invocation_state, with agent.state fallback."""
+        """Resolve identity from invocation_state (required)."""
 
-        raw = tool_context.agent.state.get("identity") or {}
         invocation_identity = tool_context.invocation_state.get("identity")
         if isinstance(invocation_identity, IdentityContext):
             return invocation_identity
 
-        return cls(
-            subject_id=str(raw.get("subject_id") or ""),
-            actor_id=raw.get("actor_id"),
-            roles=frozenset(raw.get("roles") or ()),
+        raise RuntimeError(
+            "invocation_state missing IdentityContext under 'identity'"
         )

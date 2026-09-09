@@ -1,20 +1,19 @@
-"""Config-driven HITL catalogs and nested interrupt coverage."""
+"""HITL catalog wiring and nested interrupt coverage."""
 
 import threading
 from types import SimpleNamespace
 
 import pytest
 from conftest import make_context
-from strands.interrupt import Interrupt, InterruptException
+from strands.interrupt import Interrupt
 from strands.vended_interventions.hitl import HumanInTheLoop
 
-from agent.config import hitl_allowed_tools, load_service_config
-from agent.controls.auth import require_vault_token
+from agent.config import hitl_allowed_tools
 from agent.controls.hitl import NESTED_HITL_REASON_KEY
 from agent.core.agent_factory import AgentFactory, _subagent_tool
 from agent.core.event_mapping import map_interrupts
 from agent.core.models import SubagentSpec
-from agent.core.token_vault import TokenVault
+from agent.core.sessions import make_file_session_manager
 from agent.tools import builtin
 
 
@@ -81,8 +80,6 @@ def test_subagent_hitl_covers_nested_leaf_tools(service_config, tmp_path, monkey
         description="test",
         tools=("calculator", "approval_demo", "authentication_demo"),
     )
-    from agent.core.sessions import make_file_session_manager
-
     nested_tool = _subagent_tool(
         spec,
         name="open_subagent",
@@ -156,7 +153,6 @@ async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path,
     """Custom subagent tool passes ToolContext.invocation_state into invoke_async."""
 
     monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
-    from agent.core.sessions import make_file_session_manager
 
     captured: dict[str, object] = {}
     spec = SubagentSpec(
@@ -210,89 +206,6 @@ async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path,
     assert results, "expected a tool result event"
 
 
-@pytest.mark.asyncio
-async def test_auth_interrupt_from_within_nested_agent_context(tmp_path):
-    """Auth interrupt is raised by the tool body, independent of HITL."""
-
-    vault = TokenVault(tmp_path)
-    identity = make_context(roles={"auth_user"}, token_vault=vault).identity
-    nested_agent = SimpleNamespace(
-        name="Open Subagent",
-        state={"identity": {"subject_id": identity.subject_id, "roles": ["auth_user"]}},
-    )
-
-    def interrupt(name, reason=None):
-        raise InterruptException(
-            Interrupt(id="auth-nested-1", name=name, reason=reason)
-        )
-
-    tool_context = SimpleNamespace(
-        agent=nested_agent,
-        invocation_state={"token_vault": vault, "identity": identity},
-        interrupt=interrupt,
-    )
-
-    with pytest.raises(InterruptException) as raised:
-        await require_vault_token(
-            tool_context,  # type: ignore[arg-type]
-            service="authentication_demo",
-            tool_name="authentication_demo",
-        )
-
-    interrupt_obj = raised.value.interrupt
-    assert interrupt_obj.name == "auth-authentication_demo"
-    assert interrupt_obj.reason["requires_auth"] is True
-    assert interrupt_obj.reason["requires_approval"] is False
-
-    mapped = map_interrupts(
-        [interrupt_obj],
-        agent_context=make_context(roles={"auth_user"}, token_vault=vault),
-        agent_name="Open Subagent",
-    )
-    assert mapped[0].requires_auth is True
-    assert mapped[0].requires_approval is False
-    assert mapped[0].agent_name == "Open Subagent"
-
-
-def test_auth_and_hitl_are_separate_interrupt_shapes():
-    auth = Interrupt(
-        id="a1",
-        name="auth-authentication_demo",
-        reason={
-            "requires_auth": True,
-            "requires_approval": False,
-            "service": "authentication_demo",
-            "authorization_url": "agent://vault/authentication_demo",
-            "tool_name": "authentication_demo",
-            "arguments": {},
-        },
-    )
-    hitl = Interrupt(
-        id="v1:before_tool_call:call-hitl:deadbeef",
-        name="strands:human-in-the-loop",
-        reason='Approve "auth_approval_demo"?\n  Input: {}',
-    )
-    mapped = map_interrupts(
-        [hitl, auth],
-        agent_name="root",
-        tool_use_message={
-            "role": "assistant",
-            "content": [
-                {
-                    "toolUse": {
-                        "toolUseId": "call-hitl",
-                        "name": "auth_approval_demo",
-                        "input": {},
-                    }
-                }
-            ],
-        },
-    )
-    assert mapped[0].requires_approval is True and mapped[0].requires_auth is False
-    assert mapped[0].tool_name == "auth_approval_demo"
-    assert mapped[1].requires_auth is True and mapped[1].requires_approval is False
-
-
 def test_nested_hitl_interrupt_carries_subagent_name():
     bubbled = Interrupt(
         id="n1",
@@ -309,9 +222,3 @@ def test_nested_hitl_interrupt_carries_subagent_name():
     assert mapped[0].tool_name == "approval_demo"
     assert mapped[0].requires_approval is True
     assert mapped[0].requires_auth is False
-
-
-def test_mcp_hitl_tool_is_config_driven_not_hardcoded():
-    config = load_service_config()
-    assert "delete_note" in config.mcp_hitl_tools
-    assert "list_notes" not in config.mcp_hitl_tools

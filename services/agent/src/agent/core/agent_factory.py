@@ -349,7 +349,6 @@ class AgentFactory:
             tools=tools,
             session_manager=session_manager,
             interventions=interventions,
-            state=context.to_agent_state(),
             trace_attributes=create_trace_attributes(context),
             hooks=[GLOBAL_DEADLINE_HOOK],
             callback_handler=None,

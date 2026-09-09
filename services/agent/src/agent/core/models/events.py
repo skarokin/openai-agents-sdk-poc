@@ -117,6 +117,27 @@ class TurnError:
 
 type TurnOutcome = TurnComplete | TurnInterrupt | TurnError
 
+type RunEvent = (
+    TextChunk
+    | ReasoningChunk
+    | ToolStart
+    | ToolResult
+    | AuthRequired
+    | UsageUpdate
+    | AgentChanged
+    | TurnOutcome
+    | ApprovalRequest
+)
+
+
+@dataclass(frozen=True, slots=True)
+class EventEnvelope:
+    """Envelope for an event in the run."""
+
+    sequence: int
+    source: EventSource
+    event: RunEvent
+
 
 @dataclass(frozen=True, slots=True)
 class CompleteResult:

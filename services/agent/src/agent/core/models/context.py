@@ -8,17 +8,6 @@ from typing import Any
 from .identity import IdentityContext
 
 
-@dataclass(frozen=True, slots=True)
-class Query:
-    """Input for either a new agent run or a resumed interrupted run."""
-
-    input: str | list[dict[str, Any]]
-
-    @property
-    def is_resume(self) -> bool:
-        return isinstance(self.input, list)
-
-
 def _default_token_vault():
     from agent.core.token_vault import TokenVault
 
@@ -27,7 +16,7 @@ def _default_token_vault():
 
 @dataclass(frozen=True, slots=True)
 class AgentContext:
-    """Per-run identity/deps via invocation_state and agent.state."""
+    """Per-run identity and deps carried via invocation_state."""
 
     identity: IdentityContext
     request_id: str
@@ -44,21 +33,6 @@ class AgentContext:
     @property
     def hard_deadline_exceeded(self) -> bool:
         return time.time() >= self.hard_deadline_epoch_seconds
-
-    def to_agent_state(self) -> dict[str, Any]:
-        """JSON-serializable identity/session facts stored on agent.state."""
-
-        return {
-            "identity": {
-                "subject_id": self.identity.subject_id,
-                "actor_id": self.identity.actor_id,
-                "roles": sorted(self.identity.roles),
-            },
-            "request_id": self.request_id,
-            "session_id": self.session_id,
-            "soft_deadline_epoch_seconds": self.soft_deadline_epoch_seconds,
-            "hard_deadline_epoch_seconds": self.hard_deadline_epoch_seconds,
-        }
 
     def to_invocation_state(self) -> dict[str, Any]:
         """Per-invocation deps (not persisted) passed into invoke/stream."""

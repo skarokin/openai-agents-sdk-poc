@@ -1,12 +1,19 @@
 """Stream event mapping tests."""
 
+from types import SimpleNamespace
+
 from strands.interrupt import Interrupt
 
 from agent.core.event_mapping import (
+    decision_to_interrupt_response,
+    final_output_text,
     map_interrupts,
     map_stream_event,
+    map_usage,
     tool_use_from_message,
+    tool_use_id_from_interrupt_id,
 )
+from agent.core.models import ReasoningChunk, TextChunk, UsageUpdate
 
 
 def test_tool_start_uses_name_from_current_tool_use():
@@ -115,7 +122,74 @@ def test_tool_result_without_prior_start_has_empty_name():
 def test_text_chunk_mapping():
     events = map_stream_event({"data": "hello"})
     assert len(events) == 1
+    assert isinstance(events[0], TextChunk)
     assert events[0].delta == "hello"
+
+
+def test_reasoning_text_is_ignored_when_flagged_as_data():
+    assert map_stream_event({"data": "think", "reasoning": True}) == []
+
+
+def test_reasoning_chunk_mapping():
+    events = map_stream_event({"reasoning": True, "reasoningText": "step 1"})
+    assert len(events) == 1
+    assert isinstance(events[0], ReasoningChunk)
+    assert events[0].delta == "step 1"
+
+
+def test_unknown_stream_event_maps_to_empty():
+    assert map_stream_event({"lifecycle": "start"}) == []
+
+
+def test_map_usage_from_accumulated_dict():
+    metrics = SimpleNamespace(
+        cycle_count=2,
+        accumulated_usage={
+            "inputTokens": 10,
+            "outputTokens": 5,
+            "totalTokens": 15,
+        },
+    )
+    assert map_usage(metrics) == UsageUpdate(
+        requests=2,
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+    )
+
+
+def test_map_usage_defaults_when_missing():
+    metrics = SimpleNamespace(cycle_count=0, accumulated_usage=None)
+    assert map_usage(metrics) == UsageUpdate()
+
+
+def test_final_output_text_from_message_blocks():
+    message = {
+        "role": "assistant",
+        "content": [{"text": "Hello"}, {"text": " world"}],
+    }
+    assert final_output_text(message) == "Hello world"
+
+
+def test_final_output_text_from_string_and_empty():
+    assert final_output_text("plain") == "plain"
+    assert final_output_text(None) == ""
+
+
+def test_decision_to_interrupt_response():
+    assert decision_to_interrupt_response("i1", "approve") == {
+        "interruptResponse": {"interruptId": "i1", "response": "yes"}
+    }
+    assert decision_to_interrupt_response("i1", "reject") == {
+        "interruptResponse": {"interruptId": "i1", "response": "n"}
+    }
+
+
+def test_tool_use_id_from_interrupt_id():
+    assert (
+        tool_use_id_from_interrupt_id("v1:before_tool_call:tu-1:deadbeef") == "tu-1"
+    )
+    assert tool_use_id_from_interrupt_id("not-a-hitl-id") is None
 
 
 def test_tool_use_from_message_matches_interrupt_id():

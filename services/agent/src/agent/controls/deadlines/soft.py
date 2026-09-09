@@ -13,16 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 def _request_meta(event: BeforeModelCallEvent) -> tuple[str, str]:
-    request_id = (
-        event.invocation_state.get("request_id")
-        or event.agent.state.get("request_id")
-        or "-"
-    )
-    identity = (
-        event.invocation_state.get("identity")
-        or event.agent.state.get("identity")
-        or {}
-    )
+    request_id = event.invocation_state.get("request_id") or "-"
+    identity = event.invocation_state.get("identity") or {}
     if isinstance(identity, dict):
         subject_id = identity.get("subject_id", "-")
     else:
@@ -45,8 +37,6 @@ class SoftDeadlineHook(HookProvider):
     @staticmethod
     def _deadline_from(event: BeforeModelCallEvent, key: str) -> float | None:
         value = event.invocation_state.get(key)
-        if value is None:
-            value = event.agent.state.get(key)
         if value is None:
             return None
         return float(value)
