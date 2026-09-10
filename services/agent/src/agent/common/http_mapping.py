@@ -5,9 +5,11 @@ from typing import Any
 
 from agent.core.models import (
     AgentChanged,
+    Annotation,
     AuthRequired,
     CompleteResult,
     EventEnvelope,
+    GuardrailTripped,
     ReasoningChunk,
     TextChunk,
     ToolResult,
@@ -140,6 +142,13 @@ def stream_event(
         )
     elif isinstance(event, AuthRequired):
         event_type, data = "auth_required", asdict(event)
+    elif isinstance(event, GuardrailTripped):
+        event_type, data = "guardrail_tripped", asdict(event)
+    elif isinstance(event, Annotation):
+        event_type, data = (
+            "annotation",
+            {"kind": event.kind, "data": dict(event.data)},
+        )
     elif isinstance(event, UsageUpdate):
         event_type, data = "usage_update", asdict(event)
     elif isinstance(event, AgentChanged):

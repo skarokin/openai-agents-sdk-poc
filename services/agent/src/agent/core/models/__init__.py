@@ -3,11 +3,13 @@
 from .context import AgentContext
 from .events import (
     AgentChanged,
+    Annotation,
     ApprovalRequest,
     AuthRequired,
     CompleteResult,
     EventEnvelope,
     EventSource,
+    GuardrailTripped,
     ReasoningChunk,
     RunEvent,
     SubagentEvent,
@@ -26,11 +28,13 @@ from .tools import SubagentSpec
 __all__ = [
     "AgentChanged",
     "AgentContext",
+    "Annotation",
     "ApprovalRequest",
     "AuthRequired",
     "CompleteResult",
     "EventEnvelope",
     "EventSource",
+    "GuardrailTripped",
     "IdentityContext",
     "ReasoningChunk",
     "RunEvent",

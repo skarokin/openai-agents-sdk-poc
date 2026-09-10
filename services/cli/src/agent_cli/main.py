@@ -228,6 +228,8 @@ class AgentClient:
             print(f"\n[agent changed → {data.get('agent_name')}]")
         elif event.event_type == "guardrail_tripped":
             print(f"\n[guardrail: {data.get('message')}]")
+        elif event.event_type == "annotation":
+            print(f"\n[annotation:{data.get('kind')}] {data.get('data')}")
         elif event.event_type == "turn_error":
             print(f"\n[error: {data.get('code')}] {data.get('message')}")
         elif event.event_type == "turn_complete":

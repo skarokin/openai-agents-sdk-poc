@@ -141,6 +141,7 @@ class StreamEvent(ContractModel):
         "tool_start",
         "tool_result",
         "guardrail_tripped",
+        "annotation",
         "auth_required",
         "usage_update",
         "agent_changed",

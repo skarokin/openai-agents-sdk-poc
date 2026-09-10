@@ -66,6 +66,23 @@ class AuthRequired:
 
 
 @dataclass(frozen=True, slots=True)
+class GuardrailTripped:
+    """A guardrail blocked or flagged content during the run."""
+
+    message: str
+    name: str | None = None
+    details: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Annotation:
+    """Out-of-band enrichment on a run (citations, grounding, provenance, etc.)."""
+
+    kind: str
+    data: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class AgentChanged:
     """Execution was handed off to another agent."""
 
@@ -132,6 +149,8 @@ type RunEvent = (
     | ToolResult
     | SubagentEvent
     | AuthRequired
+    | GuardrailTripped
+    | Annotation
     | UsageUpdate
     | AgentChanged
     | TurnOutcome
