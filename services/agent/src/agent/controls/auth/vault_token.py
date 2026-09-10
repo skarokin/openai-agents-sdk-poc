@@ -1,10 +1,14 @@
 """Helpers for raising auth interrupts from tools."""
 
+import logging
 from typing import Any
 
 from strands.types.tools import ToolContext
 
 from agent.core.models import IdentityContext
+
+
+logger = logging.getLogger(__name__)
 
 
 async def require_vault_token(
@@ -44,7 +48,12 @@ async def require_vault_token(
 
     stored = await vault.get(identity, service)
     if stored is None:
-        raise RuntimeError(
-            f"No vault token for service '{service}' after auth interrupt"
+        logger.error(
+            "No vault token for service '%s' after auth interrupt was approved",
+            service,
         )
+        raise RuntimeError(
+            f"No vault token for service '{service}' after auth interrupt was approved"
+        )
+
     return stored.access_token

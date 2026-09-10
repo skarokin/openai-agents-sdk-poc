@@ -106,6 +106,9 @@ def _subagent_tool(
     5. Soft-deadline hook is attached here (same GLOBAL_DEADLINE_HOOK as root)
 
     The session manager being shared is critical for the interrupt state to be shared between root and subagents.
+
+    NOTE: if subagents need to behave differently from the rest, SubagentSpec should accept a full Agent object
+    so that there is full control over the subagent's behavior. 
     """
 
     nested_hitl = frozenset(hitl_tools) & frozenset(spec.tools)

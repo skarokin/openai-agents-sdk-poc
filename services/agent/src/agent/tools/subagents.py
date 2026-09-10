@@ -19,7 +19,7 @@ SUBAGENT_DESCRIPTION = (
     "Delegate a focused task to a subagent that can calculate and "
     "demonstrate nested approval / auth workflows."
 )
-SHARED_LEAF_TOOLS = ("calculator", "approval_demo", "authentication_demo")
+SHARED_LEAF_TOOLS = ("calculator", "approval_demo", "authentication_demo", "auth_approval_demo")
 
 protected_subagent = SubagentSpec(
     agent_name="Protected Subagent",

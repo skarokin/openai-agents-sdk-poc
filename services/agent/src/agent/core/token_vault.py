@@ -1,5 +1,7 @@
 """JSON-backed per-subject tokens for JIT tool SSO."""
 
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import json
@@ -30,9 +32,9 @@ class TokenVault:
         self._token_dir.mkdir(parents=True, exist_ok=True)
         self._locks: dict[str, asyncio.Lock] = {}
 
-    @staticmethod
-    def from_environment() -> "TokenVault":
-        return TokenVault(Path(os.getenv("AGENT_DATA_DIR", ".agent-data")))
+    @classmethod
+    def from_environment(cls) -> TokenVault:
+        return cls(Path(os.getenv("AGENT_DATA_DIR", ".agent-data")))
 
     def challenge(self, service: str) -> AuthChallenge:
         return AuthChallenge(
