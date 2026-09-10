@@ -77,48 +77,49 @@ def _nested_interrupt_reason(
     )
 
 
-def _subagent_tool(
-    spec: SubagentSpec,
+def openai_model(model: str | Model) -> Model:
+    """Build an OpenAI Strands model, or pass through an existing Model."""
+
+    if isinstance(model, Model):
+        return model
+
+    return OpenAIModel(
+        model_id=model,
+        params={
+            "reasoning_effort": "none"
+        }
+    )
+
+
+def build_subagent(
+    agent: Agent,
     *,
-    name: str,
-    tools: list[Any],
-    model: str | Model,
-    hitl_tools: frozenset[str] | set[str],
+    agent_id: str,
     session_manager: FileSessionManager,
-) -> Any:
+    hitl_tools: frozenset[str] | set[str] = frozenset(),
+) -> Agent:
     """
-    Build a nested agent-as-tool that shares the parent conversation session.
+    Rebinds a self-defined Agent with non-negotiable dependencies. This is used for agent-as-tools.
 
-    This is the global source-of-truth for how all subagents should behave when invoked as a tool.
-    It's possible that later down the line a subagent should behave differently from the rest,
-    but until then we want to keep the behavior consistent and always use this function.
+    Always applied:
+    - shared parent session_manager (interrupt/session continuity)
+    - GLOBAL_DEADLINE_HOOK (deadlines must be enforced on all agents)
+    - HITL intervention for tools that appear in both the agent and hitl_tools
+    - stable agent_id (tool name) for session isolation within the shared manager
+    - ... this list will grow ...
 
-    An agent-as-tool...
-    1. Does not inherit the parent's invocation_state
-    2. Does not natively bubble up interrupts to the parent agent
-    3. (this list will grow as we add more features that need to be handled)
-
-    So, this function serves to ensure that:
-    1. Invocation state is passed in to the nested agent via ToolContext (includes shared soft/hard deadline epochs)
-    2. Interrupts made on the subagent bubble up to the root agent
-    3. Interrupts made in response to subagents are bubbled back down to the subagent
-    4. Parent cancel_signal is forwarded so hard cancel will also stop the nested agent
-    5. Soft-deadline hook is attached here (same GLOBAL_DEADLINE_HOOK as root)
-
-    The session manager being shared is critical for the interrupt state to be shared between root and subagents.
-
-    NOTE: if subagents need to behave differently from the rest, SubagentSpec should accept a full Agent object
-    so that there is full control over the subagent's behavior. 
+    If anything is added to the main agent that must be applied to all subagents, edit this function
     """
 
-    nested_hitl = frozenset(hitl_tools) & frozenset(spec.tools)
-    display_name = spec.agent_name or name
-    nested = Agent(
-        agent_id=name,
-        name=display_name,
-        description=spec.description,
-        system_prompt=spec.instructions,
-        model=_openai_model(model),
+    tools = [agent.tool_registry.registry[name] for name in agent.tool_names]
+    nested_hitl = frozenset(hitl_tools) & frozenset(agent.tool_names)
+
+    return Agent(
+        agent_id=agent_id,
+        name=agent.name,
+        description=agent.description,
+        system_prompt=agent.system_prompt,
+        model=agent.model,
         tools=tools,
         session_manager=session_manager,
         interventions=(
@@ -130,9 +131,33 @@ def _subagent_tool(
         callback_handler=None,
     )
 
-    # the actual subagent execution logic
+
+def as_subagent_tool(
+    agent: Agent,
+    *,
+    name: str,
+    session_manager: FileSessionManager,
+    hitl_tools: frozenset[str] | set[str] = frozenset(),
+    description: str | None = None,
+) -> Any:
+    """
+    Single place to wrap Agents as tools to ensure consistent behavior across subagents.
+    """
+
+    # *ALL* subagents will be built via this function to ensure consistency of the Agent object 
+    nested = build_subagent(
+        agent,
+        agent_id=name,
+        session_manager=session_manager,
+        hitl_tools=hitl_tools,
+    )
+    display_name = nested.name or name
+    tool_description = description or nested.description or ""
+
+    # the actual subagent execution logic - *ALL* subagents will be ran via this function
+    # if the actual *running* of subagents needs to change, edit this function
     async def run(input: str, tool_context: ToolContext) -> str:
-        # copy invocation state from the parent agent
+        # forward all invocation state from the parent
         invocation_state = {
             key: value
             for key, value in tool_context.invocation_state.items()
@@ -140,7 +165,7 @@ def _subagent_tool(
         }
 
         # if subagent has an active interrupt, we need to bubble down the response that the user
-        # provided to the parent agent back down to the subagent
+        # provided to the main agent back down to the subagent
         if nested._interrupt_state.activated:
             responses = []
             tool_use_message = nested._interrupt_state.context.get("tool_use_message")
@@ -195,26 +220,13 @@ def _subagent_tool(
                 )
             raise RuntimeError("nested interrupt should have raised")
 
-        # parent agent sees agent's final message as a regular tool result
         return final_output_text(result.message) or str(result)
 
-    decorated = tool(name=name, description=spec.description, context=True)(run)
+    decorated = tool(name=name, description=tool_description, context=True)(run)
     # this just allows tests to grab the nested Agent object
     decorated._nested_agent = nested  # type: ignore[attr-defined]
 
     return decorated
-
-
-def _openai_model(model: str | Model) -> Model:
-    if isinstance(model, Model):
-        return model
-
-    return OpenAIModel(
-        model_id=model,
-        params={
-            "reasoning_effort": "none"
-        }
-    )
 
 
 class AgentFactory:
@@ -228,7 +240,7 @@ class AgentFactory:
         self._config = config
         self._mcp_clients: dict[str, MCPClient] = {}
         self._mcp_lock = asyncio.Lock()
-        self._model = _openai_model(model if model is not None else config.agent.model)
+        self._model = openai_model(model if model is not None else config.agent.model)
 
     @property
     def max_turns(self) -> int:
@@ -285,52 +297,39 @@ class AgentFactory:
         )
 
         function_tools: dict[str, Any] = {}
-        subagent_entries: list[tuple[str, ToolConfig, SubagentSpec]] = []
+        subagent_entries: list[tuple[str, SubagentSpec]] = []
 
+        # build tool catalog from config, only including tools that are enabled and allowed for the caller's role
+        # skips MCP and subagents which need to be handled differently
         for name, settings in self._config.tools.items():
-            if not settings.enabled or settings.type == "mcp":
-                continue
-            if not _has_role(context, settings.allowed_roles):
+            if not settings.enabled or settings.type == "mcp" or not _has_role(context, settings.allowed_roles):
                 continue
 
             implementation = _load_symbol(settings.import_path)
             if isinstance(implementation, SubagentSpec):
-                subagent_entries.append((name, settings, implementation))
-                continue
-
-            function_tools[name] = implementation
+                subagent_entries.append((name, implementation))
+            else:
+                function_tools[name] = implementation
 
         tools: list[Any] = list(function_tools.values())
 
-        for name, _settings, spec in subagent_entries:
-            leaf_tools = [
-                function_tools[tool_name]
-                for tool_name in spec.tools
-                if tool_name in function_tools
-            ]
-            if len(leaf_tools) < len(spec.tools):
-                for tool_name in spec.tools:
-                    if tool_name in function_tools:
-                        continue
-                    tool_settings = self._config.tools.get(tool_name)
-                    if tool_settings is None or tool_settings.type == "mcp":
-                        continue
-                    leaf_tools.append(_load_symbol(tool_settings.import_path))
-
+        # add subagents to tool catalog. as_subagent_tool handles non-negotiables that all subagents must have
+        for name, spec in subagent_entries:
             tools.append(
-                _subagent_tool(
-                    spec,
+                as_subagent_tool(
+                    spec.agent,
                     name=name,
-                    tools=leaf_tools,
-                    model=self._model,
-                    hitl_tools=self._config.hitl_tools,
                     session_manager=session_manager,
+                    hitl_tools=self._config.hitl_tools,
+                    description=spec.agent.description,
                 )
             )
 
+        # add MCP to tool catalog; lazily loads and connects to MCP clients as needed
         mcp_clients = await self._connect_mcp(context)
         tools.extend(mcp_clients)
 
+        # define what tools require HITL
         hitl = self._hitl_intervention()
         interventions = [hitl] if hitl is not None else None
 

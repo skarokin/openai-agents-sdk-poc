@@ -102,27 +102,27 @@ async def test_root_and_nested_attach_soft_deadline_hook(
 @pytest.mark.asyncio
 async def test_subagent_forwards_cancel_signal(service_config, tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
-    from agent.core.agent_factory import _subagent_tool
-    from agent.core.models import SubagentSpec
+    from agent.core.agent_factory import as_subagent_tool, openai_model
     from agent.core.sessions import make_file_session_manager
     from agent.tools import builtin
+    from strands import Agent
 
     captured: dict[str, object] = {}
-    spec = SubagentSpec(
-        agent_name="Nested",
-        instructions="test",
+    nested = Agent(
+        name="Nested",
+        system_prompt="test",
         description="test",
-        tools=("calculator",),
-    )
-    tool = _subagent_tool(
-        spec,
-        name="open_subagent",
         tools=[builtin.calculator],
-        model="unused",
+        model=openai_model("unused"),
+        callback_handler=None,
+    )
+    tool = as_subagent_tool(
+        nested,
+        name="open_subagent",
         hitl_tools=service_config.hitl_tools,
         session_manager=make_file_session_manager("cancel-forward", "test-user"),
     )
-    nested = tool._nested_agent
+    nested_runtime = tool._nested_agent
     signal = threading.Event()
 
     async def capture_invoke(prompt, *, invocation_state=None, cancel_signal=None, **kwargs):
@@ -134,7 +134,7 @@ async def test_subagent_forwards_cancel_signal(service_config, tmp_path, monkeyp
             message={"role": "assistant", "content": [{"text": "ok"}]},
         )
 
-    nested.invoke_async = capture_invoke  # type: ignore[method-assign]
+    nested_runtime.invoke_async = capture_invoke  # type: ignore[method-assign]
     parent = SimpleNamespace(
         _interrupt_state=SimpleNamespace(interrupts={}, activated=False),
         cancel_signal=threading.Event(),

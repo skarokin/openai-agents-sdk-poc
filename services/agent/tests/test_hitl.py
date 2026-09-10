@@ -10,11 +10,11 @@ from strands.vended_interventions.hitl import HumanInTheLoop
 
 from agent.config import hitl_allowed_tools
 from agent.controls.hitl import NESTED_HITL_REASON_KEY
-from agent.core.agent_factory import AgentFactory, _subagent_tool
+from agent.core.agent_factory import AgentFactory, as_subagent_tool, openai_model
 from agent.core.event_mapping import map_interrupts
-from agent.core.models import SubagentSpec
 from agent.core.sessions import make_file_session_manager
 from agent.tools import builtin
+from strands import Agent
 
 
 def _hitl_handlers(agent) -> list[HumanInTheLoop]:
@@ -74,17 +74,17 @@ async def test_parent_hitl_includes_mcp_and_catalog_tools(service_config):
 
 def test_subagent_hitl_covers_nested_leaf_tools(service_config, tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
-    spec = SubagentSpec(
-        agent_name="Nested",
-        instructions="test",
+    nested = Agent(
+        name="Nested",
+        system_prompt="test",
         description="test",
-        tools=("calculator", "approval_demo", "authentication_demo"),
-    )
-    nested_tool = _subagent_tool(
-        spec,
-        name="open_subagent",
         tools=[builtin.calculator, builtin.approval_demo, builtin.authentication_demo],
-        model="unused",
+        model=openai_model("unused"),
+        callback_handler=None,
+    )
+    nested_tool = as_subagent_tool(
+        nested,
+        name="open_subagent",
         hitl_tools=service_config.hitl_tools,
         session_manager=make_file_session_manager("hitl-spec", "test-user"),
     )
@@ -155,21 +155,21 @@ async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path,
     monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
 
     captured: dict[str, object] = {}
-    spec = SubagentSpec(
-        agent_name="Nested",
-        instructions="test",
+    nested = Agent(
+        name="Nested",
+        system_prompt="test",
         description="test",
-        tools=("calculator",),
-    )
-    tool = _subagent_tool(
-        spec,
-        name="open_subagent",
         tools=[builtin.calculator],
-        model="unused",
+        model=openai_model("unused"),
+        callback_handler=None,
+    )
+    tool = as_subagent_tool(
+        nested,
+        name="open_subagent",
         hitl_tools=service_config.hitl_tools,
         session_manager=make_file_session_manager("forward-state", "test-user"),
     )
-    nested = tool._nested_agent
+    nested_runtime = tool._nested_agent
 
     async def capture_invoke(prompt, *, invocation_state=None, **kwargs):
         captured["prompt"] = prompt
@@ -180,7 +180,7 @@ async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path,
             message={"role": "assistant", "content": [{"text": "ok"}]},
         )
 
-    nested.invoke_async = capture_invoke  # type: ignore[method-assign]
+    nested_runtime.invoke_async = capture_invoke  # type: ignore[method-assign]
     vault = object()
     identity = object()
     parent = SimpleNamespace(

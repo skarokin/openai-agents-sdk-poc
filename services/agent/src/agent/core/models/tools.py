@@ -2,12 +2,11 @@
 
 from dataclasses import dataclass
 
+from strands import Agent
+
 
 @dataclass(frozen=True, slots=True)
 class SubagentSpec:
-    """Definition of an agent-as-tool. Instances can live in any module."""
+    """Catalog entry wrapping a fully defined nested Agent (YAML auto-discovery)."""
 
-    agent_name: str
-    instructions: str
-    description: str
-    tools: tuple[str, ...]
+    agent: Agent

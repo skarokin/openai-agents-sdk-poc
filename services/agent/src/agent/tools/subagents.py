@@ -1,13 +1,22 @@
 """
-Subagent catalog. Only needs to define the agent name, instructions,
-descriptions, and tools.
+Subagent catalog: define real Agents here, wrap in SubagentSpec for YAML discovery.
 
-Tools are decoupled from the subagent definition - they are defined and used
-elsewhere. HITL for invoking the subagent itself is configured in tool_config.yaml
-(``hitl: true`` on the subagent entry).
+as_subagent_tool (via the factory) injects non-negotiables: shared session, HITL,
+deadline hook, and interrupt bubbling.
 """
 
+import os
+
+from strands import Agent
+
+from agent.core.agent_factory import openai_model
 from agent.core.models import SubagentSpec
+from agent.tools.builtin import (
+    approval_demo,
+    auth_approval_demo,
+    authentication_demo,
+    calculator,
+)
 
 SUBAGENT_INSTRUCTIONS = (
     "You are a focused subagent. Use the calculator for arithmetic. "
@@ -19,17 +28,25 @@ SUBAGENT_DESCRIPTION = (
     "Delegate a focused task to a subagent that can calculate and "
     "demonstrate nested approval / auth workflows."
 )
-SHARED_LEAF_TOOLS = ("calculator", "approval_demo", "authentication_demo", "auth_approval_demo")
 
-protected_subagent = SubagentSpec(
-    agent_name="Protected Subagent",
-    instructions=SUBAGENT_INSTRUCTIONS,
-    description=SUBAGENT_DESCRIPTION,
-    tools=SHARED_LEAF_TOOLS,
-)
-open_subagent = SubagentSpec(
-    agent_name="Open Subagent",
-    instructions=SUBAGENT_INSTRUCTIONS,
-    description=SUBAGENT_DESCRIPTION,
-    tools=SHARED_LEAF_TOOLS,
-)
+_SHARED_TOOLS = [
+    calculator,
+    approval_demo,
+    authentication_demo,
+    auth_approval_demo,
+]
+
+
+def _subagent(name: str) -> Agent:
+    return Agent(
+        name=name,
+        description=SUBAGENT_DESCRIPTION,
+        system_prompt=SUBAGENT_INSTRUCTIONS,
+        model=openai_model(os.getenv("AGENT_MODEL", "gpt-5.6-luna")),
+        tools=_SHARED_TOOLS,
+        callback_handler=None,
+    )
+
+
+protected_subagent = SubagentSpec(agent=_subagent("Protected Subagent"))
+open_subagent = SubagentSpec(agent=_subagent("Open Subagent"))
