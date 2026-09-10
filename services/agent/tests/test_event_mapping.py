@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from strands.interrupt import Interrupt
 
 from agent.core.event_mapping import (
+    ToolCallTracker,
     decision_to_interrupt_response,
     final_output_text,
     map_interrupts,
@@ -13,11 +14,11 @@ from agent.core.event_mapping import (
     tool_use_from_message,
     tool_use_id_from_interrupt_id,
 )
-from agent.core.models import ReasoningChunk, TextChunk, UsageUpdate
+from agent.core.models import ReasoningChunk, SubagentEvent, TextChunk, ToolStart, UsageUpdate
 
 
 def test_tool_start_uses_name_from_current_tool_use():
-    tool_calls: dict[str, str] = {}
+    tool_calls = ToolCallTracker()
     events = map_stream_event(
         {
             "current_tool_use": {
@@ -34,7 +35,7 @@ def test_tool_start_uses_name_from_current_tool_use():
 
 
 def test_tool_result_joins_name_from_earlier_tool_start_in_same_stream():
-    tool_calls: dict[str, str] = {}
+    tool_calls = ToolCallTracker()
     map_stream_event(
         {
             "current_tool_use": {
@@ -68,7 +69,7 @@ def test_tool_result_joins_name_from_earlier_tool_start_in_same_stream():
 
 
 def test_current_tool_use_emits_tool_start_once():
-    tool_calls: dict[str, str] = {}
+    tool_calls = ToolCallTracker()
     first = {
         "current_tool_use": {
             "toolUseId": "call-1",
@@ -88,11 +89,43 @@ def test_current_tool_use_emits_tool_start_once():
     assert map_stream_event(second, tool_calls=tool_calls) == []
 
 
+def test_current_tool_use_waits_for_parseable_streaming_input():
+    tool_calls = ToolCallTracker()
+    empty = {
+        "current_tool_use": {
+            "toolUseId": "call-1",
+            "name": "calculator",
+            "input": "",
+        }
+    }
+    partial = {
+        "current_tool_use": {
+            "toolUseId": "call-1",
+            "name": "calculator",
+            "input": '{"expression"',
+        }
+    }
+    complete = {
+        "current_tool_use": {
+            "toolUseId": "call-1",
+            "name": "calculator",
+            "input": '{"expression": "5+5"}',
+        }
+    }
+
+    assert map_stream_event(empty, tool_calls=tool_calls) == []
+    assert map_stream_event(partial, tool_calls=tool_calls) == []
+    events = map_stream_event(complete, tool_calls=tool_calls)
+    assert len(events) == 1
+    assert events[0].arguments == {"expression": "5+5"}
+    assert map_stream_event(complete, tool_calls=tool_calls) == []
+
+
 def test_current_tool_use_without_id_is_ignored():
     assert (
         map_stream_event(
             {"current_tool_use": {"name": "auth_approval_demo", "input": {}}},
-            tool_calls={},
+            tool_calls=ToolCallTracker(),
         )
         == []
     )
@@ -113,7 +146,7 @@ def test_tool_result_without_prior_start_has_empty_name():
                 ],
             }
         },
-        tool_calls={},
+        tool_calls=ToolCallTracker(),
     )
     assert results[0].call_id == "call-9"
     assert results[0].tool_name == ""
@@ -139,6 +172,53 @@ def test_reasoning_chunk_mapping():
 
 def test_unknown_stream_event_maps_to_empty():
     assert map_stream_event({"lifecycle": "start"}) == []
+
+
+def test_subagent_tool_stream_maps_nested_tool_start_only():
+    tool_calls = ToolCallTracker()
+    events = map_stream_event(
+        {
+            "type": "tool_stream",
+            "tool_stream_event": {
+                "tool_use": {"toolUseId": "parent-1", "name": "open_subagent"},
+                "data": {
+                    "subagent_event": True,
+                    "agent_name": "Open Subagent",
+                    "event": {
+                        "current_tool_use": {
+                            "toolUseId": "nested-1",
+                            "name": "calculator",
+                            "input": {"expression": "5+5"},
+                        }
+                    },
+                },
+            },
+        },
+        tool_calls=tool_calls,
+    )
+    assert len(events) == 1
+    assert isinstance(events[0], SubagentEvent)
+    assert events[0].agent_name == "Open Subagent"
+    assert isinstance(events[0].event, ToolStart)
+    assert events[0].event.tool_name == "calculator"
+    assert events[0].event.arguments == {"expression": "5+5"}
+
+
+def test_subagent_tool_stream_ignores_nested_text():
+    events = map_stream_event(
+        {
+            "tool_stream_event": {
+                "tool_use": {"toolUseId": "parent-1", "name": "open_subagent"},
+                "data": {
+                    "subagent_event": True,
+                    "agent_name": "Open Subagent",
+                    "event": {"data": "thinking out loud"},
+                },
+            }
+        }
+    )
+    # TextChunk would map from inner event, but SubagentEvent only keeps tool activity.
+    assert events == []
 
 
 def test_map_usage_from_accumulated_dict():

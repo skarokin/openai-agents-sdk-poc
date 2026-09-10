@@ -17,7 +17,12 @@ from strands.vended_interventions.hitl import HumanInTheLoop
 from agent.config import ServiceConfig, ToolConfig, hitl_allowed_tools
 from agent.controls.deadlines import GLOBAL_DEADLINE_HOOK
 from agent.controls.hitl import nested_hitl_reason
-from agent.core.event_mapping import final_output_text, tool_use_from_message
+from agent.core.event_mapping import (
+    SUBAGENT_EVENT_KEY,
+    final_output_text,
+    is_tool_activity_event,
+    tool_use_from_message,
+)
 from agent.core.models import AgentContext, SubagentSpec
 from agent.core.runtime import create_trace_attributes
 from agent.core.sessions import ROOT_AGENT_ID, make_file_session_manager
@@ -156,13 +161,16 @@ def as_subagent_tool(
 
     # the actual subagent execution logic - *ALL* subagents will be ran via this function
     # if the actual *running* of subagents needs to change, edit this function
-    async def run(input: str, tool_context: ToolContext) -> str:
+    async def run(input: str, tool_context: ToolContext):
         # forward all invocation state from the parent
         invocation_state = {
             key: value
             for key, value in tool_context.invocation_state.items()
             if key != "agent"
         }
+        cancel_signal = (
+            invocation_state.get("cancel_signal") or tool_context.cancel_signal
+        )
 
         # if subagent has an active interrupt, we need to bubble down the response that the user
         # provided to the main agent back down to the subagent
@@ -186,24 +194,32 @@ def as_subagent_tool(
                         }
                     }
                 )
-
-            result = await nested.invoke_async(
-                responses,
-                invocation_state=invocation_state,
-                cancel_signal=(
-                    invocation_state.get("cancel_signal")
-                    or tool_context.cancel_signal
-                ),
-            )
+            prompt: Any = responses
         else:
-            result = await nested.invoke_async(
-                input,
-                invocation_state=invocation_state,
-                cancel_signal=(
-                    invocation_state.get("cancel_signal")
-                    or tool_context.cancel_signal
-                ),
-            )
+            prompt = input
+
+        result = None
+        async for event in nested.stream_async(
+            prompt,
+            invocation_state=invocation_state,
+            cancel_signal=cancel_signal,
+        ):
+            if "result" in event:
+                result = event["result"]
+                continue
+
+            # we only care about two events from the subagent:
+            # - tool activity
+            # - errors (this should be implemented later)
+            if is_tool_activity_event(event):
+                yield {
+                    SUBAGENT_EVENT_KEY: True,
+                    "agent_name": display_name,
+                    "event": dict(event),
+                }
+
+        if result is None:
+            raise RuntimeError("nested agent stream ended without a result")
 
         # if subagent raised an interrupt, we need to bubble this up to the parent agent
         # so that it can show the user the interrupt
@@ -220,7 +236,8 @@ def as_subagent_tool(
                 )
             raise RuntimeError("nested interrupt should have raised")
 
-        return final_output_text(result.message) or str(result)
+        # last yield is the tool result string (Strands async-gen contract)
+        yield final_output_text(result.message) or str(result)
 
     decorated = tool(name=name, description=tool_description, context=True)(run)
     # this just allows tests to grab the nested Agent object

@@ -19,6 +19,7 @@ from strands import Agent
 from agent.controls.deadlines import start_hard_deadline_watchdog
 from agent.core.agent_factory import AgentFactory
 from agent.core.event_mapping import (
+    ToolCallTracker,
     decision_to_interrupt_response,
     final_output_text,
     map_interrupts,
@@ -31,6 +32,7 @@ from agent.core.models import (
     EventEnvelope,
     EventSource,
     IdentityContext,
+    SubagentEvent,
     TurnComplete,
     TurnError,
     TurnInterrupt,
@@ -61,11 +63,11 @@ class AgentRunner:
         self._factory = factory
         self._token_vault = token_vault
         # Survives interrupt/resume streams so tool_result keeps the name from tool_start.
-        self._tool_names: dict[str, dict[str, str]] = {}
+        self._tool_trackers: dict[str, ToolCallTracker] = {}
 
-    def _tool_names_for(self, context: AgentContext) -> dict[str, str]:
+    def _tool_tracker_for(self, context: AgentContext) -> ToolCallTracker:
         key = f"{context.identity.subject_id}:{context.session_id}"
-        return self._tool_names.setdefault(key, {})
+        return self._tool_trackers.setdefault(key, ToolCallTracker())
 
     async def _prepare(
         self,
@@ -109,7 +111,7 @@ class AgentRunner:
                 kind="root",
             )
 
-            tool_calls = self._tool_names_for(context)
+            tool_calls = self._tool_tracker_for(context)
             result = None
 
             try:
@@ -130,11 +132,23 @@ class AgentRunner:
 
                         for normalized in map_stream_event(event, tool_calls=tool_calls):
                             sequence += 1
-                            yield EventEnvelope(
-                                sequence=sequence,
-                                source=source,
-                                event=normalized,
-                            )
+                            if isinstance(normalized, SubagentEvent):
+                                yield EventEnvelope(
+                                    sequence=sequence,
+                                    source=EventSource(
+                                        agent_name=normalized.agent_name,
+                                        invocation_id=context.request_id,
+                                        parent_invocation_id=context.request_id,
+                                        kind="agent_tool",
+                                    ),
+                                    event=normalized.event,
+                                )
+                            else:
+                                yield EventEnvelope(
+                                    sequence=sequence,
+                                    source=source,
+                                    event=normalized,
+                                )
                 finally:
                     watchdog.cancel()
 
@@ -154,7 +168,7 @@ class AgentRunner:
                     )
                 else:
                     key = f"{context.identity.subject_id}:{context.session_id}"
-                    self._tool_names.pop(key, None)
+                    self._tool_trackers.pop(key, None)
                     terminal = TurnComplete(
                         output=final_output_text(result.message),
                         usage=map_usage(result.metrics),

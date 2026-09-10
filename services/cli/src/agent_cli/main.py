@@ -28,6 +28,18 @@ def _render(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, indent=2)
 
 
+def _format_tool_start(source: str, tool_name: str, arguments: Any) -> str:
+    """Shared display for root and nested (subagent) tool starts."""
+
+    return f"[{source} → {tool_name}: {_render(arguments)}]"
+
+
+def _format_tool_result(source: str, tool_name: str, output: Any) -> str:
+    """Shared display for root and nested (subagent) tool results."""
+
+    return f"[{source} ← {tool_name}: {_render(output)}]"
+
+
 def _prompt_auth(*, tool_name: str, service: str, authorization_url: str) -> None:
     print(f"\nAuthentication required for {tool_name} ({service}).")
     print(f"Open: {authorization_url}")
@@ -188,7 +200,14 @@ class AgentClient:
             if call_id and tool_name:
                 self._tool_names[call_id] = tool_name
 
-            print(f"\n[{source} → {tool_name or call_id}]")
+            print(
+                "\n"
+                + _format_tool_start(
+                    source,
+                    tool_name or call_id or "tool",
+                    data.get("arguments", {}),
+                )
+            )
         elif event.event_type == "tool_result":
             call_id = str(data.get("call_id") or "")
             tool_name = (
@@ -198,7 +217,8 @@ class AgentClient:
                 or "tool"
             )
             print(
-                f"\n[{source} ← {tool_name}: {_render(data.get('output'))}]"
+                "\n"
+                + _format_tool_result(source, str(tool_name), data.get("output"))
             )
         elif event.event_type == "auth_required":
             print(

@@ -125,16 +125,18 @@ async def test_subagent_forwards_cancel_signal(service_config, tmp_path, monkeyp
     nested_runtime = tool._nested_agent
     signal = threading.Event()
 
-    async def capture_invoke(prompt, *, invocation_state=None, cancel_signal=None, **kwargs):
+    async def capture_stream(prompt, *, invocation_state=None, cancel_signal=None, **kwargs):
         captured["cancel_signal"] = cancel_signal
         captured["invocation_state"] = dict(invocation_state or {})
-        return SimpleNamespace(
-            stop_reason="end_turn",
-            interrupts=None,
-            message={"role": "assistant", "content": [{"text": "ok"}]},
-        )
+        yield {
+            "result": SimpleNamespace(
+                stop_reason="end_turn",
+                interrupts=None,
+                message={"role": "assistant", "content": [{"text": "ok"}]},
+            )
+        }
 
-    nested_runtime.invoke_async = capture_invoke  # type: ignore[method-assign]
+    nested_runtime.stream_async = capture_stream  # type: ignore[method-assign]
     parent = SimpleNamespace(
         _interrupt_state=SimpleNamespace(interrupts={}, activated=False),
         cancel_signal=threading.Event(),

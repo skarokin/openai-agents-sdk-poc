@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 from strands.interrupt import Interrupt
@@ -12,11 +13,35 @@ from agent.core.models import (
     ApprovalRequest,
     ReasoningChunk,
     RunEvent,
+    SubagentEvent,
     TextChunk,
     ToolResult,
     ToolStart,
     UsageUpdate,
 )
+
+
+SUBAGENT_EVENT_KEY = "subagent_event"
+
+
+@dataclass
+class ToolCallTracker:
+    """Tracks tool names and which starts were already emitted for a stream."""
+
+    names: dict[str, str] = field(default_factory=dict)
+    started: set[str] = field(default_factory=set)
+
+    def remember(self, call_id: str, tool_name: str) -> None:
+        self.names[call_id] = tool_name
+
+    def mark_started(self, call_id: str) -> None:
+        self.started.add(call_id)
+
+    def was_started(self, call_id: str) -> bool:
+        return call_id in self.started
+
+    def name_for(self, call_id: str) -> str:
+        return self.names.get(call_id, "")
 
 
 def _arguments(raw: Any) -> dict[str, Any]:
@@ -31,12 +56,61 @@ def _arguments(raw: Any) -> dict[str, Any]:
     return {} if raw is None else {"value": raw}
 
 
+def _tool_args_ready(raw: Any) -> bool:
+    """False while model is still streaming a partial tool-input string."""
+
+    if isinstance(raw, Mapping):
+        return True
+    if isinstance(raw, str):
+        if not raw.strip():
+            return False
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return False
+        return isinstance(parsed, Mapping)
+    return raw is not None
+
+
+def is_tool_activity_event(event: Mapping[str, Any]) -> bool:
+    """True for tool start/result stream events"""
+
+    tool_use = event.get("current_tool_use")
+    if isinstance(tool_use, Mapping) and tool_use.get("name"):
+        return True
+
+    message = event.get("message")
+    if isinstance(message, Mapping) and message.get("role") == "user":
+        content = message.get("content")
+        if isinstance(content, list):
+            return any(
+                isinstance(block, Mapping) and "toolResult" in block for block in content
+            )
+    return False
+
+
 def map_stream_event(
     event: Mapping[str, Any],
     *,
-    tool_calls: dict[str, str] | None = None,
+    tool_calls: ToolCallTracker | None = None,
 ) -> list[RunEvent]:
     """Map one Strands stream event dict to zero or more protocol-neutral events."""
+
+    stream = event.get("tool_stream_event")
+    if isinstance(stream, Mapping):
+        data = stream.get("data")
+        if isinstance(data, Mapping) and data.get(SUBAGENT_EVENT_KEY):
+            agent_name = str(data.get("agent_name") or "")
+            inner = data.get("event")
+            if not agent_name or not isinstance(inner, Mapping):
+                return []
+            nested = map_stream_event(inner, tool_calls=tool_calls)
+            return [
+                SubagentEvent(agent_name=agent_name, event=item)
+                for item in nested
+                if isinstance(item, (ToolStart, ToolResult))
+            ]
+        return []
 
     if "data" in event and isinstance(event.get("data"), str):
         if event.get("reasoning"):
@@ -50,18 +124,24 @@ def map_stream_event(
     if isinstance(tool_use, Mapping) and tool_use.get("name"):
         call_id = str(tool_use.get("toolUseId") or tool_use.get("tool_use_id") or "")
         tool_name = str(tool_use["name"])
-        # current_tool_use is re-emitted on every input delta; only announce once.
+        raw_input = tool_use.get("input")
+        # current_tool_use is re-emitted on every input delta; wait for parseable
+        # args, then announce once with the full payload.
         if not call_id:
             return []
         if tool_calls is not None:
-            if call_id in tool_calls:
+            tool_calls.remember(call_id, tool_name)
+            if tool_calls.was_started(call_id):
                 return []
-            tool_calls[call_id] = tool_name
+        if not _tool_args_ready(raw_input):
+            return []
+        if tool_calls is not None:
+            tool_calls.mark_started(call_id)
         return [
             ToolStart(
                 call_id=call_id,
                 tool_name=tool_name,
-                arguments=_arguments(tool_use.get("input")),
+                arguments=_arguments(raw_input),
             )
         ]
 
@@ -78,9 +158,7 @@ def map_stream_event(
                     continue
                 call_id = str(tool_result.get("toolUseId") or "")
                 tool_name = (
-                    tool_calls.get(call_id, "")
-                    if tool_calls is not None
-                    else ""
+                    tool_calls.name_for(call_id) if tool_calls is not None else ""
                 )
                 results.append(
                     ToolResult(

@@ -150,7 +150,7 @@ async def test_nested_interrupt_restored_via_shared_session(
 
 @pytest.mark.asyncio
 async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path, monkeypatch):
-    """Custom subagent tool passes ToolContext.invocation_state into invoke_async."""
+    """Custom subagent tool passes ToolContext.invocation_state into stream_async."""
 
     monkeypatch.setenv("AGENT_DATA_DIR", str(tmp_path))
 
@@ -171,16 +171,18 @@ async def test_subagent_tool_forwards_invocation_state(service_config, tmp_path,
     )
     nested_runtime = tool._nested_agent
 
-    async def capture_invoke(prompt, *, invocation_state=None, **kwargs):
+    async def capture_stream(prompt, *, invocation_state=None, **kwargs):
         captured["prompt"] = prompt
         captured["invocation_state"] = dict(invocation_state or {})
-        return SimpleNamespace(
-            stop_reason="end_turn",
-            interrupts=None,
-            message={"role": "assistant", "content": [{"text": "ok"}]},
-        )
+        yield {
+            "result": SimpleNamespace(
+                stop_reason="end_turn",
+                interrupts=None,
+                message={"role": "assistant", "content": [{"text": "ok"}]},
+            )
+        }
 
-    nested_runtime.invoke_async = capture_invoke  # type: ignore[method-assign]
+    nested_runtime.stream_async = capture_stream  # type: ignore[method-assign]
     vault = object()
     identity = object()
     parent = SimpleNamespace(

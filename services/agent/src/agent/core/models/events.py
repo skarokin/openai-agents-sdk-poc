@@ -48,6 +48,14 @@ class ToolResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SubagentEvent:
+    """Tool activity from inside a nested agent-as-tool (not text/reasoning)."""
+
+    agent_name: str
+    event: ToolStart | ToolResult
+
+
+@dataclass(frozen=True, slots=True)
 class AuthRequired:
     """A tool was blocked because the caller lacks a vault token for a service."""
 
@@ -122,6 +130,7 @@ type RunEvent = (
     | ReasoningChunk
     | ToolStart
     | ToolResult
+    | SubagentEvent
     | AuthRequired
     | UsageUpdate
     | AgentChanged
