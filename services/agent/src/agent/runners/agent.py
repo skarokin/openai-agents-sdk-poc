@@ -19,11 +19,10 @@ from strands import Agent
 from agent.controls.deadlines import start_hard_deadline_watchdog
 from agent.core.agent_factory import AgentFactory
 from agent.core.event_mapping import (
-    ToolCallTracker,
+    StreamEventMapper,
     decision_to_interrupt_response,
     final_output_text,
     map_interrupts,
-    map_stream_event,
     map_usage,
 )
 from agent.core.models import (
@@ -62,12 +61,6 @@ class AgentRunner:
     def __init__(self, factory: AgentFactory, token_vault: TokenVault) -> None:
         self._factory = factory
         self._token_vault = token_vault
-        # Survives interrupt/resume streams so tool_result keeps the name from tool_start.
-        self._tool_trackers: dict[str, ToolCallTracker] = {}
-
-    def _tool_tracker_for(self, context: AgentContext) -> ToolCallTracker:
-        key = f"{context.identity.subject_id}:{context.session_id}"
-        return self._tool_trackers.setdefault(key, ToolCallTracker())
 
     async def _prepare(
         self,
@@ -111,7 +104,7 @@ class AgentRunner:
                 kind="root",
             )
 
-            tool_calls = self._tool_tracker_for(context)
+            mapper = StreamEventMapper()
             result = None
 
             try:
@@ -130,7 +123,7 @@ class AgentRunner:
                             result = event["result"]
                             continue
 
-                        for normalized in map_stream_event(event, tool_calls=tool_calls):
+                        for normalized in mapper.map(event):
                             sequence += 1
                             if isinstance(normalized, SubagentEvent):
                                 yield EventEnvelope(
@@ -167,8 +160,6 @@ class AgentRunner:
                         ),
                     )
                 else:
-                    key = f"{context.identity.subject_id}:{context.session_id}"
-                    self._tool_trackers.pop(key, None)
                     terminal = TurnComplete(
                         output=final_output_text(result.message),
                         usage=map_usage(result.metrics),

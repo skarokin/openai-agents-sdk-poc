@@ -25,8 +25,8 @@ SUBAGENT_EVENT_KEY = "subagent_event"
 
 
 @dataclass
-class ToolCallTracker:
-    """Tracks tool names and which starts were already emitted for a stream."""
+class _ToolCallTracker:
+    """Per-stream: defer ToolStart until args are ready, emit once, join names on results."""
 
     names: dict[str, str] = field(default_factory=dict)
     started: set[str] = field(default_factory=set)
@@ -89,87 +89,84 @@ def is_tool_activity_event(event: Mapping[str, Any]) -> bool:
     return False
 
 
-def map_stream_event(
-    event: Mapping[str, Any],
-    *,
-    tool_calls: ToolCallTracker | None = None,
-) -> list[RunEvent]:
-    """Map one Strands stream event dict to zero or more protocol-neutral events."""
+class StreamEventMapper:
+    """Maps Strands stream events for one turn; owns tool-call dedupe state."""
 
-    stream = event.get("tool_stream_event")
-    if isinstance(stream, Mapping):
-        data = stream.get("data")
-        if isinstance(data, Mapping) and data.get(SUBAGENT_EVENT_KEY):
-            agent_name = str(data.get("agent_name") or "")
-            inner = data.get("event")
-            if not agent_name or not isinstance(inner, Mapping):
+    def __init__(self) -> None:
+        self._tool_calls = _ToolCallTracker()
+
+    def map(self, event: Mapping[str, Any]) -> list[RunEvent]:
+        """Map one Strands stream event dict to zero or more protocol-neutral events."""
+
+        stream = event.get("tool_stream_event")
+        if isinstance(stream, Mapping):
+            data = stream.get("data")
+            if isinstance(data, Mapping) and data.get(SUBAGENT_EVENT_KEY):
+                agent_name = str(data.get("agent_name") or "")
+                inner = data.get("event")
+                if not agent_name or not isinstance(inner, Mapping):
+                    return []
+                nested = self.map(inner)
+                return [
+                    SubagentEvent(agent_name=agent_name, event=item)
+                    for item in nested
+                    if isinstance(item, (ToolStart, ToolResult))
+                ]
+            return []
+
+        if "data" in event and isinstance(event.get("data"), str):
+            if event.get("reasoning"):
                 return []
-            nested = map_stream_event(inner, tool_calls=tool_calls)
+            return [TextChunk(delta=event["data"])]
+
+        if event.get("reasoning") and isinstance(event.get("reasoningText"), str):
+            return [ReasoningChunk(delta=event["reasoningText"])]
+
+        tool_use = event.get("current_tool_use")
+        if isinstance(tool_use, Mapping) and tool_use.get("name"):
+            call_id = str(tool_use.get("toolUseId") or tool_use.get("tool_use_id") or "")
+            tool_name = str(tool_use["name"])
+            raw_input = tool_use.get("input")
+            # current_tool_use is re-emitted on every input delta; wait for parseable
+            # args, then announce once with the full payload.
+            if not call_id:
+                return []
+            self._tool_calls.remember(call_id, tool_name)
+            if self._tool_calls.was_started(call_id):
+                return []
+            if not _tool_args_ready(raw_input):
+                return []
+            self._tool_calls.mark_started(call_id)
             return [
-                SubagentEvent(agent_name=agent_name, event=item)
-                for item in nested
-                if isinstance(item, (ToolStart, ToolResult))
+                ToolStart(
+                    call_id=call_id,
+                    tool_name=tool_name,
+                    arguments=_arguments(raw_input),
+                )
             ]
-        return []
 
-    if "data" in event and isinstance(event.get("data"), str):
-        if event.get("reasoning"):
-            return []
-        return [TextChunk(delta=event["data"])]
-
-    if event.get("reasoning") and isinstance(event.get("reasoningText"), str):
-        return [ReasoningChunk(delta=event["reasoningText"])]
-
-    tool_use = event.get("current_tool_use")
-    if isinstance(tool_use, Mapping) and tool_use.get("name"):
-        call_id = str(tool_use.get("toolUseId") or tool_use.get("tool_use_id") or "")
-        tool_name = str(tool_use["name"])
-        raw_input = tool_use.get("input")
-        # current_tool_use is re-emitted on every input delta; wait for parseable
-        # args, then announce once with the full payload.
-        if not call_id:
-            return []
-        if tool_calls is not None:
-            tool_calls.remember(call_id, tool_name)
-            if tool_calls.was_started(call_id):
-                return []
-        if not _tool_args_ready(raw_input):
-            return []
-        if tool_calls is not None:
-            tool_calls.mark_started(call_id)
-        return [
-            ToolStart(
-                call_id=call_id,
-                tool_name=tool_name,
-                arguments=_arguments(raw_input),
-            )
-        ]
-
-    message = event.get("message")
-    if isinstance(message, Mapping) and message.get("role") == "user":
-        content = message.get("content")
-        if isinstance(content, list):
-            results: list[RunEvent] = []
-            for block in content:
-                if not isinstance(block, Mapping) or "toolResult" not in block:
-                    continue
-                tool_result = block["toolResult"]
-                if not isinstance(tool_result, Mapping):
-                    continue
-                call_id = str(tool_result.get("toolUseId") or "")
-                tool_name = (
-                    tool_calls.name_for(call_id) if tool_calls is not None else ""
-                )
-                results.append(
-                    ToolResult(
-                        call_id=call_id,
-                        tool_name=tool_name,
-                        output=tool_result.get("content"),
+        message = event.get("message")
+        if isinstance(message, Mapping) and message.get("role") == "user":
+            content = message.get("content")
+            if isinstance(content, list):
+                results: list[RunEvent] = []
+                for block in content:
+                    if not isinstance(block, Mapping) or "toolResult" not in block:
+                        continue
+                    tool_result = block["toolResult"]
+                    if not isinstance(tool_result, Mapping):
+                        continue
+                    call_id = str(tool_result.get("toolUseId") or "")
+                    results.append(
+                        ToolResult(
+                            call_id=call_id,
+                            tool_name=self._tool_calls.name_for(call_id),
+                            output=tool_result.get("content"),
+                        )
                     )
-                )
-            return results
+                return results
 
-    return []
+        return []
 
 
 def map_usage(metrics: Any) -> UsageUpdate:
