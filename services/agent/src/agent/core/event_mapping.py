@@ -198,29 +198,35 @@ def tool_use_id_from_interrupt_id(interrupt_id: str) -> str | None:
     return None
 
 
-def tool_use_from_message(
-    tool_use_message: Mapping[str, Any] | None,
-    interrupt_id: str,
-) -> tuple[str, dict[str, Any]]:
-    """Resolve tool name/args from the interrupt-state assistant tool_use message."""
+def tool_info_from_interrupt(interrupt: Interrupt) -> tuple[str, dict[str, Any]]:
+    """Resolve tool name/args from the interrupt itself (no session context).
 
-    tool_use_id = tool_use_id_from_interrupt_id(interrupt_id)
-    if tool_use_message is None or not tool_use_id:
-        return "", {}
+    Preference:
+    1. Structured ``reason`` dict (auth / nested HITL) with ``tool_name`` / ``arguments``
+    2. Native Strands HITL prompt string:
+       ``Approve \"{tool_name}\"?\\n  Input: {json}``
+    """
 
-    content = tool_use_message.get("content")
-    if not isinstance(content, list):
-        return "", {}
+    reason = interrupt.reason
+    if isinstance(reason, Mapping):
+        tool_name = str(reason.get("tool_name") or "")
+        if tool_name or "arguments" in reason:
+            return tool_name, _arguments(reason.get("arguments"))
 
-    for block in content:
-        if not isinstance(block, Mapping) or "toolUse" not in block:
-            continue
-        tool_use = block["toolUse"]
-        if not isinstance(tool_use, Mapping):
-            continue
-        if str(tool_use.get("toolUseId") or "") != tool_use_id:
-            continue
-        return str(tool_use.get("name") or ""), _arguments(tool_use.get("input"))
+    if isinstance(reason, str) and reason.startswith('Approve "'):
+        rest = reason[len('Approve "') :]
+        tool_name, sep, after = rest.partition('"')
+        if not sep:
+            return "", {}
+        marker = "\n  Input: "
+        idx = after.find(marker)
+        if idx < 0:
+            return tool_name, {}
+        raw = after[idx + len(marker) :]
+        try:
+            return tool_name, _arguments(json.loads(raw))
+        except json.JSONDecodeError:
+            return tool_name, {"raw": raw} if raw else {}
 
     return "", {}
 
@@ -230,7 +236,6 @@ def map_interrupts(
     *,
     agent_context: AgentContext | None = None,
     agent_name: str | None = None,
-    tool_use_message: Mapping[str, Any] | None = None,
 ) -> tuple[ApprovalRequest, ...]:
     """Map Strands Interrupt objects into protocol ApprovalRequest models."""
 
@@ -279,7 +284,7 @@ def map_interrupts(
             )
             continue
 
-        tool_name, arguments = tool_use_from_message(tool_use_message, item.id)
+        tool_name, arguments = tool_info_from_interrupt(item)
         approvals.append(
             ApprovalRequest(
                 interruption_id=item.id,

@@ -21,7 +21,7 @@ from agent.core.event_mapping import (
     SUBAGENT_EVENT_KEY,
     final_output_text,
     is_tool_activity_event,
-    tool_use_from_message,
+    tool_info_from_interrupt,
 )
 from agent.core.models import AgentContext, SubagentSpec
 from agent.core.runtime import create_trace_attributes
@@ -61,20 +61,19 @@ def _nested_interrupt_reason(
     interrupt: Any,
     *,
     agent_name: str,
-    tool_use_message: Any = None,
 ) -> Any:
     """
     Tag bubbled nested interrupts so UI can show the subagent, not the root.
 
-    Native HITL keeps a string reason; we only wrap it so the root can carry
-    agent_name plus tool name/args from the nested interrupt's tool_use_message.
+    Native HITL keeps a prompt string; we wrap it with agent_name plus tool
+    name/args parsed from the interrupt itself (no tool_use_message).
     """
 
     reason = interrupt.reason
     if isinstance(reason, dict) and reason.get("requires_auth"):
         return {**reason, "agent_name": agent_name}
 
-    tool_name, arguments = tool_use_from_message(tool_use_message, interrupt.id)
+    tool_name, arguments = tool_info_from_interrupt(interrupt)
     return nested_hitl_reason(
         agent_name=agent_name,
         tool_name=tool_name,
@@ -176,14 +175,12 @@ def as_subagent_tool(
         # provided to the main agent back down to the subagent
         if nested._interrupt_state.activated:
             responses = []
-            tool_use_message = nested._interrupt_state.context.get("tool_use_message")
             for interrupt in nested._interrupt_state.interrupts.values():
                 response = tool_context.interrupt(
                     interrupt.id,
                     reason=_nested_interrupt_reason(
                         interrupt,
                         agent_name=display_name,
-                        tool_use_message=tool_use_message,
                     ),
                 )
                 responses.append(
@@ -224,14 +221,12 @@ def as_subagent_tool(
         # if subagent raised an interrupt, we need to bubble this up to the parent agent
         # so that it can show the user the interrupt
         if result.stop_reason == "interrupt" and result.interrupts:
-            tool_use_message = nested._interrupt_state.context.get("tool_use_message")
             for interrupt in result.interrupts:
                 tool_context.interrupt(
                     interrupt.id,
                     reason=_nested_interrupt_reason(
                         interrupt,
                         agent_name=display_name,
-                        tool_use_message=tool_use_message,
                     ),
                 )
             raise RuntimeError("nested interrupt should have raised")

@@ -96,18 +96,6 @@ def test_auth_and_hitl_are_separate_interrupt_shapes():
     mapped = map_interrupts(
         [hitl, auth],
         agent_name="root",
-        tool_use_message={
-            "role": "assistant",
-            "content": [
-                {
-                    "toolUse": {
-                        "toolUseId": "call-hitl",
-                        "name": "auth_approval_demo",
-                        "input": {},
-                    }
-                }
-            ],
-        },
     )
     assert mapped[0].requires_approval is True and mapped[0].requires_auth is False
     assert mapped[0].tool_name == "auth_approval_demo"
